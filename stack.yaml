@@ -1,0 +1,9 @@
+flags: {}
+extra-package-dbs: []
+packages:
+- '.'
+- '../hunfold.git'
+extra-deps:
+- list-transformer-1.0.1
+- hunfold-0.1.0.0
+resolver: lts-7.13
