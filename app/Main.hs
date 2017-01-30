@@ -1,9 +1,7 @@
 {-# LANGUAGE DataKinds                 #-}
-{-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedLists           #-}
 {-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE RankNTypes                #-}
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE TemplateHaskell           #-}
@@ -20,8 +18,9 @@ import           Data.Map.Strict     (Map)
 import qualified Data.Map.Strict     as M
 import           Data.Text           (Text)
 import qualified Data.Text           as T
+import           Data.Traversable    (mapAccumL)
+import           List.Transformer    (ListT (..), Step (..))
 import qualified List.Transformer    as LT
-import           Numeric.AD          hiding (auto)
 import           Options.Applicative
 import           System.IO           (IOMode (..), hPutStr, hPutStrLn, withFile)
 
@@ -45,22 +44,25 @@ cutOffNormal mu s = do
 
 zeeSmear :: Fractional a => Mat NC NE a
 zeeSmear = transpose
-  [ [0.84, 0.16, 0.0, 0.0]
-  , [0.07, 0.87, 0.06, 0.0]
-  , [0.0, 0.08, 0.84, 0.08]
-  , [0.0, 0.0, 0.05, 0.95]
+  [ normalize [38200, 580, 2.23, 0.0888]
+  , normalize [373, 3270, 99.0, 0.851]
+  , normalize [4.73, 57.5, 503, 22.5]
+  , normalize [0.313, 0.883, 13.6, 101.1]
   ]
 
 zeeSmear2 :: Fractional a => Mat NC NE a
 zeeSmear2 = transpose
-  [ [0.80, 0.15, 0.0, 0.0]
-  , [0.03, 0.90, 0.03, 0.0]
-  , [0.0, 0.09, 0.84, 0.07]
-  , [0.0, 0.0, 0.02, 0.92]
+  [ normalize [0.80, 0.15, 0.0, 0.0]
+  , normalize [0.03, 0.90, 0.03, 0.0]
+  , normalize [0.0, 0.09, 0.84, 0.07]
+  , normalize [0.0, 0.0, 0.02, 0.92]
   ]
 
+normalize :: (Traversable t, Fractional c) => t c -> t c
+normalize v = let (s', v') = mapAccumL (\s x -> (s+x, x/s')) 0 v in v'
+
 zeeData :: Vec NE Int
-zeeData = [6766, 2309, 288, 54]
+zeeData = [44812, 3241, 494, 90]
 
 nE :: Int
 nE = arity (undefined :: NE)
@@ -86,10 +88,10 @@ makeLenses ''Model
 myModel :: Fractional a => Model NC NE a
 myModel =
   Model
-    (M.singleton "ttbar" [0.32, 0.12, 0.015, 0.0026])
+    (M.singleton "ttbar" [1.38e-2, 4.97e-3, 1.20e-3, 5.14e-4])
     (pure 1)
     zeeSmear
-    3200
+    37000
 
 
 myModelParams :: (Floating a, Ord a) => Map Text (Param NC NE a)
@@ -99,7 +101,7 @@ myModelParams = M.fromList
   , ("sigma1", set (mSigs.element 1) &&& nonNegPrior)
   , ("sigma2", set (mSigs.element 2) &&& nonNegPrior)
   , ("sigma3", set (mSigs.element 3) &&& nonNegPrior)
-  , ("smear", \x -> (set mSmears (linearCombM x (1-x) zeeSmear zeeSmear2), logNormalP 0.5 0.25 x))
+  -- , ("smear", \x -> (set mSmears (linearCombM (1-x) x zeeSmear zeeSmear2), logNormalP 0 1 x))
   , ("lumi", \x -> (over mLumi (*x), logLogNormalP 0 0.2 x))
   ]
 
@@ -112,11 +114,11 @@ myModelParams = M.fromList
 myInitialParams :: Fractional a => Map Text a
 myInitialParams = M.fromList
   [ ("ttbarnorm", 1)
-  , ("sigma0", 2)
+  , ("sigma0", 1)
   , ("sigma1", 0.5)
   , ("sigma2", 0.1)
   , ("sigma3", 0.01)
-  , ("smear", 0.5)
+  -- , ("smear", 0.0)
   , ("lumi", 1)
   ]
 
@@ -127,7 +129,7 @@ myParamRadii = M.fromList
   , ("sigma1", 0.01)
   , ("sigma2", 0.01)
   , ("sigma3", 0.001)
-  , ("smear", 0.25)
+  -- , ("smear", 0.25)
   , ("lumi", 0.1)
   ]
 
@@ -163,9 +165,10 @@ modelLogPosterior fs model mdata ps =
 
 data InArgs =
     InArgs
-        { nburn  :: Int
-        , nskip  :: Int
-        , nsamps :: Int
+        { nburn   :: Int
+        , nskip   :: Int
+        , nsamps  :: Int
+        , outfile :: String
         }
 
 inArgs :: Parser InArgs
@@ -173,6 +176,7 @@ inArgs = InArgs
     <$> option auto (long "burn")
     <*> option auto (long "skip")
     <*> option auto (long "samples")
+    <*> strOption (long "outfile")
 
 opts :: ParserInfo InArgs
 opts = info (helper <*> inArgs) fullDesc
@@ -182,11 +186,33 @@ main = do
 
   InArgs {..} <- execParser opts
 
+  {-
+  let
+      (xs :: [Map Text Double]) = take 100 $ conjugateGradientAscent llh myInitialParams
+      start = last xs
 
-  let llh = modelLogPosterior myModelParams myModel zeeData
-      start = last . take 100 $ conjugateGradientAscent llh myInitialParams
+  print "data:"
+  print zeeData
+
+  print "initial params:"
+  mapM_ print $ M.toList myInitialParams
+
+  print "initial prediction:"
+  print . modelPred . fst $ appParams myModelParams myModel myInitialParams
+
+  print "gradient ascent:"
+  mapM_ print . fmap M.toList $ xs
+
+  print "best fit params:"
+  mapM_ print $ M.toList start
+
+  print "best fit prediction:"
+  print . modelPred . fst $ appParams myModelParams myModel start
+  -}
+
+  let (start :: Map Text Double) = myInitialParams
+      llh = modelLogPosterior myModelParams myModel zeeData
       prop = weightedProposal (multibandMetropolis myParamRadii) llh
-
 
   g <- createSystemRandom
 
@@ -196,13 +222,13 @@ main = do
           Cons x l' -> return . Cons x $ takeEvery n l'
           Nil       -> return Nil
 
-  let chain = takeEvery nskip $ runMC prop (T start $ llh start) g
+  let chain = takeEvery nskip . LT.drop nburn $ runMC prop (T start $ llh start) g
 
-  putStrLn
-    $ mconcat . intersperse ", " . fmap T.unpack $ "llh" : M.keys start
+  withFile outfile WriteMode $ \f -> do
+    hPutStrLn f . mconcat . intersperse ", " . fmap T.unpack $ "llh" : M.keys start
 
-  LT.runListT . LT.take nsamps
-    $ do
-      (T xs llhxs :: T (Map Text Double) Double) <- chain
-      LT.liftIO . putStr $ show llhxs ++ ", "
-      LT.liftIO . putStrLn $ mconcat . intersperse ", " . M.elems $ show <$> xs
+    LT.runListT . LT.take nsamps
+      $ do
+        (T ps llhxs :: T (Map Text Double) Double) <- chain
+        LT.liftIO . hPutStr f $ show llhxs ++ ", "
+        LT.liftIO . hPutStrLn f $ mconcat . intersperse ", " . M.elems $ show <$> ps
