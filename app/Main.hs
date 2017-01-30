@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedLists           #-}
 {-# LANGUAGE OverloadedStrings         #-}
@@ -6,71 +7,72 @@
 {-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE TemplateHaskell           #-}
 {-# LANGUAGE TypeFamilies              #-}
+{-# LANGUAGE TypeOperators             #-}
 
 
 module Main where
 
-import           Control.Applicative (liftA2)
 import           Control.Arrow       ((&&&))
 import           Control.Lens
 import           Data.List           (intersperse)
 import           Data.Map.Strict     (Map)
 import qualified Data.Map.Strict     as M
+import           Data.Maybe          (fromMaybe)
 import           Data.Text           (Text)
 import qualified Data.Text           as T
-import           Data.Traversable    (mapAccumL)
+import           GHC.Exts            (IsList (..))
+import           GHC.TypeLits
+import           Linear
+import           Linear.V
 import           List.Transformer    (ListT (..), Step (..))
 import qualified List.Transformer    as LT
 import           Options.Applicative
 import           System.IO           (IOMode (..), hPutStr, hPutStrLn, withFile)
 
+import qualified Data.Vector         as V
+-- import           Data.Vector.Fixed.Cont (ToPeano (..))
+
 import           MarkovChain
-import           Matrix
 import           Metropolis
 import           Probability
 
 
-
--- test case
-
-type NE = ToPeano 4
-type NC = ToPeano 4
+type M (n :: Nat) (m :: Nat) a = V m (V n a)
+type NC = 4
+type NE = 4
 
 
-cutOffNormal :: (InvErf b, Variate b, PrimMonad m, Ord b) => b -> b -> Prob m b
-cutOffNormal mu s = do
-  x <- normal mu s
-  if x < 0 then cutOffNormal mu s else return x
+fromListV :: forall a n. KnownNat n => [a] -> V n a
+fromListV l =
+    let v = fromVector $ V.fromList l
+        e = error
+              $ "failed to convert list to vector of length "
+                ++ show (dim (undefined :: V n a))
+    in fromMaybe e v
 
-zeeSmear :: Fractional a => Mat NC NE a
-zeeSmear = transpose
-  [ normalize [38200, 580, 2.23, 0.0888]
-  , normalize [373, 3270, 99.0, 0.851]
-  , normalize [4.73, 57.5, 503, 22.5]
-  , normalize [0.313, 0.883, 13.6, 101.1]
+instance KnownNat n => IsList (V n a) where
+  type Item (V n a) = a
+  fromList = fromListV
+
+zeeSmear :: Floating a => M NC NE a
+zeeSmear = transpose . fmap signorm $
+  [ [38200, 580, 2.23, 0.0888]
+  , [373, 3270, 99.0, 0.851]
+  , [4.73, 57.5, 503, 22.5]
+  , [0.313, 0.883, 13.6, 101.1]
   ]
 
-zeeSmear2 :: Fractional a => Mat NC NE a
+zeeSmear2 :: Floating a => M NC NE a
 zeeSmear2 = transpose
-  [ normalize [0.80, 0.15, 0.0, 0.0]
-  , normalize [0.03, 0.90, 0.03, 0.0]
-  , normalize [0.0, 0.09, 0.84, 0.07]
-  , normalize [0.0, 0.0, 0.02, 0.92]
+  [ signorm [0.80, 0.15, 0.0, 0.0]
+  , signorm [0.03, 0.90, 0.03, 0.0]
+  , signorm [0.0, 0.09, 0.84, 0.07]
+  , signorm [0.0, 0.0, 0.02, 0.92]
   ]
 
-normalize :: (Traversable t, Fractional c) => t c -> t c
-normalize v = let (s', v') = mapAccumL (\s x -> (s+x, x/s')) 0 v in v'
-
-zeeData :: Vec NE Int
+zeeData :: V NE Int
 zeeData = [44812, 3241, 494, 90]
 
-nE :: Int
-nE = arity (undefined :: NE)
-
-nC :: Int
-nC = arity (undefined :: NC)
-
-type Hist = Vec
 type Param n m a = (a -> (Model n m a -> Model n m a, a))
 
 
@@ -79,16 +81,16 @@ type Param n m a = (a -> (Model n m a -> Model n m a, a))
 -- and return a reco spectrum as an output
 data Model n m a =
   Model
-    { _mBkgs   :: Map Text (Hist m a)
-    , _mSigs   :: Hist n a
-    , _mSmears :: Mat n m a
+    { _mBkgs   :: Map Text (V m a)
+    , _mSigs   :: V n a
+    , _mSmears :: M n m a
     , _mLumi   :: a
     }
 
 makeLenses ''Model
 
 
-myModel :: Fractional a => Model NC NE a
+myModel :: Floating a => Model NC NE a
 myModel =
   Model
     (M.singleton "ttbar" [1.38e-2, 4.97e-3, 1.20e-3, 5.14e-4])
@@ -137,10 +139,10 @@ myParamRadii = M.fromList
   ]
 
 
-modelPred :: (Arity n, Arity m, Num a) => Model n m a -> Hist m a
+modelPred :: (KnownNat n, KnownNat m, Num a) => Model n m a -> V m a
 modelPred (Model bkgs sigs smears lumi) =
-  let bkgTot = foldl (liftA2 (+)) (pure 0) bkgs
-  in fmap (*lumi) $ (+) <$> multMV smears sigs <*> bkgTot
+  let bkgTot = foldl (^+^) (pure 0) bkgs
+  in fmap (*lumi) $ (+) <$> smears !* sigs <*> bkgTot
 
 
 appParams :: Num a
@@ -153,10 +155,10 @@ appParams fs m ps =
   in foldr (\(f, p) (model, prior) -> (f model, prior+p)) (m, 0) fs'
 
 
-modelLogPosterior :: (Arity m, Arity n, Integral a, Floating b, Ord b)
+modelLogPosterior :: (KnownNat n, KnownNat m, Integral a, Floating b, Ord b)
                   => Map Text (Param n m b)
                   -> Model n m b
-                  -> Hist m a
+                  -> V m a
                   -> Map Text b
                   -> b
 modelLogPosterior fs model mdata ps =
