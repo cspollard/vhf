@@ -74,6 +74,9 @@ type Hist = Vec
 type Param n m a = (a -> (Model n m a -> Model n m a, a))
 
 
+-- TODO
+-- a model should actually take params as an argument
+-- and return a reco spectrum as an output
 data Model n m a =
   Model
     { _mBkgs   :: Map Text (Hist m a)
@@ -102,7 +105,7 @@ myModelParams = M.fromList
   , ("sigma2", set (mSigs.element 2) &&& nonNegPrior)
   , ("sigma3", set (mSigs.element 3) &&& nonNegPrior)
   -- , ("smear", \x -> (set mSmears (linearCombM (1-x) x zeeSmear zeeSmear2), logNormalP 0 1 x))
-  , ("lumi", \x -> (over mLumi (*x), logLogNormalP 0 0.2 x))
+  , ("lumi", \x -> (over mLumi (*x), logLogNormalP 0 0.1 x))
   ]
 
   where

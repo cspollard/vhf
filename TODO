@@ -1,0 +1,6 @@
+- rework "Model" to take params as an argument and return a spectrum
+  (can also apply Model to posterior then to get spectra)
+
+- read input json format
+
+- how to generate parameter metropolis radii? (HMC?)
