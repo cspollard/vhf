@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE DeriveGeneric             #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedLists           #-}
@@ -14,6 +15,10 @@ module Main where
 
 import           Control.Arrow       ((&&&))
 import           Control.Lens
+import           Data.Aeson
+import           Data.Aeson.TH
+import           Data.Aeson.Types    (constructorTagModifier, typeMismatch)
+import qualified Data.Foldable       as F
 import           Data.List           (intersperse)
 import           Data.Map.Strict     (Map)
 import qualified Data.Map.Strict     as M
@@ -21,6 +26,7 @@ import           Data.Maybe          (fromMaybe)
 import           Data.Text           (Text)
 import qualified Data.Text           as T
 import           GHC.Exts            (IsList (..))
+import           GHC.Generics
 import           GHC.TypeLits
 import           Linear
 import           Linear.V
@@ -53,6 +59,17 @@ fromListV l =
 instance KnownNat n => IsList (V n a) where
   type Item (V n a) = a
   fromList = fromListV
+  toList = F.toList
+
+instance (KnownNat n, FromJSON a) => FromJSON (V n a) where
+  parseJSON v = do
+    x <- fromVector <$> parseJSON v
+    case x of
+      Nothing -> fail "failed to parse V"
+      Just y  -> return y
+
+instance (KnownNat n, ToJSON a) => ToJSON (V n a) where
+  toJSON = toJSON . toList
 
 zeeSmear :: Floating a => M NC NE a
 zeeSmear = transpose . fmap signorm $
@@ -85,9 +102,15 @@ data Model n m a =
     , _mSigs   :: V n a
     , _mSmears :: M n m a
     , _mLumi   :: a
-    }
+    } deriving (Generic, Show)
 
 makeLenses ''Model
+
+instance (KnownNat n, KnownNat m, FromJSON a) => FromJSON (Model n m a) where
+  parseJSON = genericParseJSON $ defaultOptions{fieldLabelModifier=drop 2}
+
+instance (KnownNat n, KnownNat m, ToJSON a) => ToJSON (Model n m a) where
+  toJSON = genericToJSON $ defaultOptions{fieldLabelModifier=drop 2}
 
 
 myModel :: Floating a => Model NC NE a
@@ -137,6 +160,60 @@ myParamRadii = M.fromList
   -- , ("smear", 0.25)
   , ("lumi", 0.1)
   ]
+
+newtype ParamPrior a = ParamPrior { _unPP :: a -> a }
+
+instance (Floating a, FromJSON a) => FromJSON (ParamPrior a) where
+  parseJSON (String "Flat") = return . ParamPrior $ const 0
+
+  parseJSON (Object o) =
+    (o .: "Normal" >>= p logNormalP)
+    <|> (o .: "LogNormal" >>= p logLogNormalP)
+    where
+      p f (Object m) = fmap ParamPrior $ f <$> m .: "Mu" <*> m .: "Sigma"
+      p _ invalid    = typeMismatch "ParamPrior" invalid
+
+  parseJSON invalid = typeMismatch "ParamPrior" invalid
+
+newtype ModelVariation n m a = ModelVariation { _unMV :: a -> Model n m a -> Model n m a }
+
+instance (KnownNat n, KnownNat m, Floating a, FromJSON a) => FromJSON (ModelVariation n m a) where
+  parseJSON (String "Lumi") = return . ModelVariation $ \x -> over mLumi (*x)
+
+  parseJSON (Object obj) = do
+    o <- obj .: "Modeling"
+    mmVar <- o .:? "MigrationMatrix"
+    bkgVars <- o .:? "Backgrounds"
+    sigVars <- o .:? "Signals"
+
+    let
+      f x (Model bkgs sigs mm lumi) =
+        let bkgs' = bkgVars <&> M.unionWith (\v v' -> (((1-x) *^ v) ^+^ (x *^ v'))) bkgs
+            mm' = mmVar <&> \m -> ((1-x) *!! mm) !+! (x *!! m)
+            sigs' = sigVars <&> \s -> ((1-x) *^ sigs) ^+^ (x *^ s)
+        in Model
+            (fromMaybe bkgs bkgs')
+            (fromMaybe sigs sigs')
+            (fromMaybe mm mm')
+            lumi
+
+    return $ ModelVariation f
+
+  parseJSON invalid = typeMismatch "ModelVariation" invalid
+
+
+
+data ModelParam n m a =
+  ModelParam
+    { _mpInitialValue :: a
+    , _mpRadius       :: a
+    , _mpPrior        :: ParamPrior a
+    , _mpVariation    :: ModelVariation n m a
+    } deriving Generic
+
+makeLenses ''ModelParam
+
+instance (KnownNat n, KnownNat m, Floating a, FromJSON a) => FromJSON (ModelParam n m a) where
 
 
 modelPred :: (KnownNat n, KnownNat m, Num a) => Model n m a -> V m a

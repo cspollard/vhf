@@ -5,7 +5,4 @@
 
 - how to generate parameter metropolis radii? (HMC?)
 
-- move to hmatrix instead of ContVec (for runtime histogram size
-  checking)
-
 - closure tests
