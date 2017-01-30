@@ -17,8 +17,8 @@ import           Control.Arrow       ((&&&))
 import           Control.Lens
 import           Data.Aeson
 import           Data.Aeson.TH
-import           Data.Aeson.Types    (constructorTagModifier, typeMismatch)
-import qualified Data.Foldable       as F
+import           Data.Aeson.Types    (Parser, typeMismatch)
+import qualified Data.ByteString     as BS
 import           Data.List           (intersperse)
 import           Data.Map.Strict     (Map)
 import qualified Data.Map.Strict     as M
@@ -27,93 +27,76 @@ import           Data.Text           (Text)
 import qualified Data.Text           as T
 import           GHC.Exts            (IsList (..))
 import           GHC.Generics
-import           GHC.TypeLits
 import           Linear
-import           Linear.V
 import           List.Transformer    (ListT (..), Step (..))
 import qualified List.Transformer    as LT
-import           Options.Applicative
+import           Options.Applicative hiding (Parser)
+import qualified Options.Applicative as OA
 import           System.IO           (IOMode (..), hPutStr, hPutStrLn, withFile)
 
-import qualified Data.Vector         as V
--- import           Data.Vector.Fixed.Cont (ToPeano (..))
 
 import           MarkovChain
 import           Metropolis
 import           Probability
 
 
-type M (n :: Nat) (m :: Nat) a = V m (V n a)
-type NC = 4
-type NE = 4
+type Hist = ZipList
+type Mat a = Hist (Hist a)
 
+instance IsList (ZipList a) where
+  type Item (ZipList a) = a
+  fromList = ZipList
+  toList = getZipList
 
-fromListV :: forall a n. KnownNat n => [a] -> V n a
-fromListV l =
-    let v = fromVector $ V.fromList l
-        e = error
-              $ "failed to convert list to vector of length "
-                ++ show (dim (undefined :: V n a))
-    in fromMaybe e v
+instance FromJSON a => FromJSON (ZipList a) where
+  parseJSON v = ZipList <$> parseJSON v
 
-instance KnownNat n => IsList (V n a) where
-  type Item (V n a) = a
-  fromList = fromListV
-  toList = F.toList
+instance ToJSON a => ToJSON (ZipList a) where
+  toJSON = toJSON . getZipList
 
-instance (KnownNat n, FromJSON a) => FromJSON (V n a) where
-  parseJSON v = do
-    x <- fromVector <$> parseJSON v
-    case x of
-      Nothing -> fail "failed to parse V"
-      Just y  -> return y
-
-instance (KnownNat n, ToJSON a) => ToJSON (V n a) where
-  toJSON = toJSON . toList
-
-zeeSmear :: Floating a => M NC NE a
-zeeSmear = transpose . fmap signorm $
+zeeSmear :: Floating a => Mat a
+zeeSmear = sequenceA . fmap signorm $
   [ [38200, 580, 2.23, 0.0888]
   , [373, 3270, 99.0, 0.851]
   , [4.73, 57.5, 503, 22.5]
   , [0.313, 0.883, 13.6, 101.1]
   ]
 
-zeeSmear2 :: Floating a => M NC NE a
-zeeSmear2 = transpose
-  [ signorm [0.80, 0.15, 0.0, 0.0]
-  , signorm [0.03, 0.90, 0.03, 0.0]
-  , signorm [0.0, 0.09, 0.84, 0.07]
-  , signorm [0.0, 0.0, 0.02, 0.92]
+zeeSmear2 :: Floating a => Mat a
+zeeSmear2 = sequenceA . fmap signorm $
+  [ [0.80, 0.15, 0.0, 0.0]
+  , [0.03, 0.90, 0.03, 0.0]
+  , [0.0, 0.09, 0.84, 0.07]
+  , [0.0, 0.0, 0.02, 0.92]
   ]
 
-zeeData :: V NE Int
+zeeData :: Hist Int
 zeeData = [44812, 3241, 494, 90]
 
-type Param n m a = (a -> (Model n m a -> Model n m a, a))
+type Param a = (a -> (Model a -> Model a, a))
 
 
 -- TODO
 -- a model should actually take params as an argument
 -- and return a reco spectrum as an output
-data Model n m a =
+data Model a =
   Model
-    { _mBkgs   :: Map Text (V m a)
-    , _mSigs   :: V n a
-    , _mSmears :: M n m a
+    { _mBkgs   :: Map Text (Hist a)
+    , _mSigs   :: Hist a
+    , _mSmears :: Mat a
     , _mLumi   :: a
     } deriving (Generic, Show)
 
 makeLenses ''Model
 
-instance (KnownNat n, KnownNat m, FromJSON a) => FromJSON (Model n m a) where
+instance (FromJSON a) => FromJSON (Model a) where
   parseJSON = genericParseJSON $ defaultOptions{fieldLabelModifier=drop 2}
 
-instance (KnownNat n, KnownNat m, ToJSON a) => ToJSON (Model n m a) where
+instance (ToJSON a) => ToJSON (Model a) where
   toJSON = genericToJSON $ defaultOptions{fieldLabelModifier=drop 2}
 
 
-myModel :: Floating a => Model NC NE a
+myModel :: Floating a => Model a
 myModel =
   Model
     (M.singleton "ttbar" [1.38e-2, 4.97e-3, 1.20e-3, 5.14e-4])
@@ -122,7 +105,7 @@ myModel =
     37000
 
 
-myModelParams :: (Floating a, Ord a) => Map Text (Param NC NE a)
+myModelParams :: (Floating a, Ord a) => Map Text (Param a)
 myModelParams = M.fromList
   [ ("ttbarnorm", \x -> (over (mBkgs.ix "ttbar") (fmap (*x)), logLogNormalP 0 0.2 x))
   , ("sigma0", set (mSigs.element 0) &&& nonNegPrior)
@@ -175,9 +158,10 @@ instance (Floating a, FromJSON a) => FromJSON (ParamPrior a) where
 
   parseJSON invalid = typeMismatch "ParamPrior" invalid
 
-newtype ModelVariation n m a = ModelVariation { _unMV :: a -> Model n m a -> Model n m a }
 
-instance (KnownNat n, KnownNat m, Floating a, FromJSON a) => FromJSON (ModelVariation n m a) where
+newtype ModelVariation a = ModelVariation { _unMV :: a -> Model a -> Model a }
+
+instance (Floating a, FromJSON a) => FromJSON (ModelVariation a) where
   parseJSON (String "Lumi") = return . ModelVariation $ \x -> over mLumi (*x)
 
   parseJSON (Object obj) = do
@@ -202,40 +186,49 @@ instance (KnownNat n, KnownNat m, Floating a, FromJSON a) => FromJSON (ModelVari
   parseJSON invalid = typeMismatch "ModelVariation" invalid
 
 
-
-data ModelParam n m a =
+data ModelParam a =
   ModelParam
     { _mpInitialValue :: a
     , _mpRadius       :: a
     , _mpPrior        :: ParamPrior a
-    , _mpVariation    :: ModelVariation n m a
+    , _mpVariation    :: ModelVariation a
     } deriving Generic
 
 makeLenses ''ModelParam
 
-instance (KnownNat n, KnownNat m, Floating a, FromJSON a) => FromJSON (ModelParam n m a) where
+instance (Floating a, FromJSON a) => FromJSON (ModelParam a) where
+  parseJSON = genericParseJSON $ defaultOptions{fieldLabelModifier=drop 3}
 
 
-modelPred :: (KnownNat n, KnownNat m, Num a) => Model n m a -> V m a
+parseModel :: (Floating a, FromJSON a) => Value -> Parser (Hist Int, [ModelParam a], Model a)
+parseModel = withObject "error: decodeModel was not given a json dictionary" $
+  \o -> do
+    m <- o .: "Model"
+    mps <- o .: "ModelParams"
+    d <- o .: "Data"
+
+    return (d, m, mps)
+
+modelPred :: (Num a) => Model a -> Hist a
 modelPred (Model bkgs sigs smears lumi) =
   let bkgTot = foldl (^+^) (pure 0) bkgs
   in fmap (*lumi) $ (+) <$> smears !* sigs <*> bkgTot
 
 
 appParams :: Num a
-          => Map Text (Param n m a)
-          -> Model n m a
+          => Map Text (Param a)
+          -> Model a
           -> Map Text a
-          -> (Model n m a, a)
+          -> (Model a, a)
 appParams fs m ps =
   let fs' = M.intersectionWith ($) fs ps
   in foldr (\(f, p) (model, prior) -> (f model, prior+p)) (m, 0) fs'
 
 
-modelLogPosterior :: (KnownNat n, KnownNat m, Integral a, Floating b, Ord b)
-                  => Map Text (Param n m b)
-                  -> Model n m b
-                  -> V m a
+modelLogPosterior :: (Integral a, Floating b, Ord b)
+                  => Map Text (Param b)
+                  -> Model b
+                  -> Hist a
                   -> Map Text b
                   -> b
 modelLogPosterior fs model mdata ps =
@@ -251,14 +244,16 @@ data InArgs =
         , nskip   :: Int
         , nsamps  :: Int
         , outfile :: String
+        , infile  :: String
         }
 
-inArgs :: Parser InArgs
+inArgs :: OA.Parser InArgs
 inArgs = InArgs
     <$> option auto (long "burn")
     <*> option auto (long "skip")
     <*> option auto (long "samples")
     <*> strOption (long "outfile")
+    <*> strOption (long "infile")
 
 opts :: ParserInfo InArgs
 opts = info (helper <*> inArgs) fullDesc
@@ -268,33 +263,14 @@ main = do
 
   InArgs {..} <- execParser opts
 
-  {-
-  let
-      (xs :: [Map Text Double]) = take 100 $ conjugateGradientAscent llh myInitialParams
-      start = last xs
+  Just (dataH :: Hist Int, model, modelparams) <- decodeStrict <$> BS.readFile infile
 
-  print "data:"
-  print zeeData
-
-  print "initial params:"
-  mapM_ print $ M.toList myInitialParams
-
-  print "initial prediction:"
-  print . modelPred . fst $ appParams myModelParams myModel myInitialParams
-
-  print "gradient ascent:"
-  mapM_ print . fmap M.toList $ xs
-
-  print "best fit params:"
-  mapM_ print $ M.toList start
-
-  print "best fit prediction:"
-  print . modelPred . fst $ appParams myModelParams myModel start
-  -}
-
-  let (start :: Map Text Double) = myInitialParams
-      llh = modelLogPosterior myModelParams myModel zeeData
-      prop = weightedProposal (multibandMetropolis myParamRadii) llh
+  let (start :: Map Text Double) = _mpInitialValue <$> modelparams
+      (radii :: Map Text Double) = _mpRadius <$> modelparams
+      (params :: Map Text (Param Double)) =
+        (\p -> (_unMV . _mpVariation) p &&& (_unPP . _mpPrior) p) <$> modelparams
+      llh = modelLogPosterior params model dataH :: Map Text Double -> Double
+      prop = weightedProposal (multibandMetropolis radii) llh
 
   g <- createSystemRandom
 
