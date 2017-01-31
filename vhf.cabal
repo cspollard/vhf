@@ -32,8 +32,8 @@ executable run-unfold
                      , vector == 0.11.*
                      , aeson == 0.11.*
                      , bytestring == 0.10.*
-                     , ad == 4.3.*
                      , declarative == 0.2.*
+                     , ad == 4.3.*
   hs-source-dirs:      app/
   default-language:    Haskell2010
   ghc-options:         -Wall -fwarn-monomorphism-restriction -fwarn-incomplete-record-updates -fwarn-unused-do-bind

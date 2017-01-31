@@ -21,14 +21,12 @@
     , "ModelParams" : {
         "lumi" : {
             "InitialValue" : 1
-            , "Radius" : 0.1
             , "Prior" : { "Normal" : {"Mu" : 1, "Sigma" : 0.1} }
             , "Variation" : "Lumi"
         }
 
         , "ttbarnorm" : {
             "InitialValue" : 0
-            , "Radius" : 0.1
             , "Prior" : { "Normal" : {"Mu" : 0, "Sigma" : 0.2} }
             , "Variation" : {
                 "Backgrounds" : { "ttbar" : [2, 1, 0.5, 0.25] }
@@ -37,7 +35,6 @@
 
         , "sigma0" : {
             "InitialValue" : 10
-            , "Radius" : 0.1
             , "Prior" : "Flat"
             , "Variation" : {
                 "Signal" : [1, 0, 0, 0]
@@ -46,7 +43,6 @@
 
         , "sigma1" : {
             "InitialValue" : 5
-            , "Radius" : 0.1
             , "Prior" : "Flat"
             , "Variation" : {
                 "Signal" : [0, 1, 0, 0]
@@ -55,7 +51,6 @@
 
         , "sigma2" : {
             "InitialValue" : 2.5
-            , "Radius" : 0.1
             , "Prior" : "Flat"
             , "Variation" : {
                 "Signal" : [0, 0, 1, 0]
@@ -64,7 +59,6 @@
 
         , "sigma3" : {
             "InitialValue" : 1.25
-            , "Radius" : 0.1
             , "Prior" : "Flat"
             , "Variation" : {
                 "Signal" : [0, 0, 0, 1]

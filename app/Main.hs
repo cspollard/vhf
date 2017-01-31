@@ -13,34 +13,32 @@
 
 module Main where
 
-import           Control.Arrow           ((&&&))
+import           Control.Arrow        ((&&&))
 import           Control.Lens
 import           Data.Aeson
 import           Data.Aeson.TH
-import           Data.Aeson.Types        (Parser, parseEither, typeMismatch)
-import qualified Data.ByteString.Lazy    as BS
-import           Data.List               (intersperse)
-import           Data.Map.Strict         (Map)
-import qualified Data.Map.Strict         as M
-import           Data.Maybe              (fromMaybe, isNothing)
-import           Data.Text               (Text)
-import qualified Data.Text               as T
-import           GHC.Exts                (IsList (..))
+import           Data.Aeson.Types     (Parser, parseEither, typeMismatch)
+import qualified Data.ByteString.Lazy as BS
+import           Data.List            (intersperse)
+import           Data.Map.Strict      (Map)
+import qualified Data.Map.Strict      as M
+import           Data.Maybe           (fromMaybe, isNothing)
+import           Data.Text            (Text)
+import qualified Data.Text            as T
+import           GHC.Exts             (IsList (..))
 import           GHC.Generics
 import           Linear
-import           List.Transformer        (ListT (..), Step (..))
-import qualified List.Transformer        as LT
+import           List.Transformer     (ListT (..), Step (..))
+import qualified List.Transformer     as LT
+import           Numeric.AD           hiding (auto)
 import           Numeric.MCMC
-import           Options.Applicative     hiding (Parser)
-import qualified Options.Applicative     as OA
-import           System.IO               (IOMode (..), hPutStr, hPutStrLn,
-                                          withFile)
+import           Options.Applicative  hiding (Parser)
+import qualified Options.Applicative  as OA
+import           System.IO            (BufferMode (..), IOMode (..), hPutStr,
+                                       hPutStrLn, hSetBuffering, stdout,
+                                       withFile)
 
 import           MarkovChain
--- import           Metropolis
-import           Hamiltonian
-import           Numeric.AD              (grad)
-import qualified Numeric.AD.Mode.Reverse as R
 import           Probability
 
 
@@ -137,7 +135,6 @@ instance (Floating a, FromJSON a) => FromJSON (ModelVariation a) where
 data ModelParam a =
   ModelParam
     { _mpInitialValue :: a
-    , _mpRadius       :: a
     , _mpPrior        :: ParamPrior a
     , _mpVariation    :: ModelVariation a
     } deriving Generic
@@ -159,8 +156,8 @@ parseModel = withObject "error: decodeModel was not given a json dictionary" $
     return (d, m, mps)
 
 
--- TODO
--- with ziplists (^+^) is not the same as liftA2 (+)
+-- NB: with ZipLists (^+^) is not the same as liftA2 (+)
+-- (^+^) does not stop adding when one ZipList ends...
 modelPred :: (Num a) => Model a -> Hist a
 modelPred (Model bkgs sigs smears lumi) =
   let bkgTot = foldl (liftA2 (+)) (pure 0) bkgs
@@ -210,112 +207,58 @@ inArgs = InArgs
 opts :: ParserInfo InArgs
 opts = info (helper <*> inArgs) fullDesc
 
+everyLT :: Monad m => Int -> (a -> m ()) -> ListT m a -> ListT m a
+everyLT n f = go 0
+  where
+    go m ll = ListT $ do
+      c <- next ll
+      case c of
+        Cons x lll ->
+          if m >= n
+            then f x >> (return . Cons x $ go 0 lll)
+            else return . Cons x $ go (m+1) lll
+        Nil -> return Nil
+
+
+takeEvery :: Monad m => Int -> ListT m a -> ListT m a
+takeEvery n l = ListT $ do
+  c <- next $ LT.drop n l
+  case c of
+    Cons x l' -> return . Cons x $ takeEvery n l'
+    Nil       -> return Nil
+
+
 main :: IO ()
 main = do
 
   InArgs {..} <- execParser opts
+
   parsed <- eitherDecode' <$> BS.readFile infile
+
   case parseEither parseModel =<< parsed of
     Left err -> print err
     Right (dataH, model, modelparams) -> do
 
+      g <- createSystemRandom
+
       let start = _mpInitialValue <$> modelparams
-          radii = _mpRadius <$> modelparams
           params =
             (\p -> (_unMV . _mpVariation) p &&& (_unPP . _mpPrior) p) <$> modelparams
           llh = modelLogPosterior params model dataH
-
-      let trans = slice 0.1
-
-      g <- createSystemRandom
-
-      let takeEvery n l = ListT $ do
-            c <- next $ LT.drop n l
-            case c of
-              Cons x l' -> return . Cons x $ takeEvery n l'
-              Nil       -> return Nil
-
-      let c = Chain (Target llh Nothing) (llh start) start Nothing
-          chain = takeEvery nskip . LT.drop nburn $ runMC trans c g
+          trans = metropolis 0.001
+          -- trans = concatAllT $ replicate nburn (metropolis 0.1) ++ repeat (slice 0.02)
+          -- trans = concatAllT $ replicate nburn (metropolis 0.001)
+          -- trans = hamiltonian 0.01 5
+          c = Chain (Target llh Nothing) (llh start) start Nothing
+          chain =
+            takeEvery nskip . LT.drop nburn $ runMC trans c g
 
       withFile outfile WriteMode $ \f -> do
         hPutStrLn f . mconcat . intersperse ", " . fmap T.unpack $ "llh" : M.keys start
 
         LT.runListT . LT.take nsamps
           $ do
-            Chain{..} <- chain
+            Chain {..} <- chain
             LT.liftIO . print . modelPred . fst . appParams params model $ chainPosition
             LT.liftIO . hPutStr f $ show chainScore ++ ", "
             LT.liftIO . hPutStrLn f $ mconcat . intersperse ", " . M.elems $ show <$> chainPosition
-
-
-
-{-
-myModel :: Floating a => Model a
-myModel =
-  Model
-    (M.singleton "ttbar" [1.38e-2, 4.97e-3, 1.20e-3, 5.14e-4])
-    (pure 1)
-    zeeSmear
-    37000
-
-
-myModelParams :: (Floating a, Ord a) => Map Text (Param a)
-myModelParams = M.fromList
-  [ ("ttbarnorm", \x -> (over (mBackgrounds.ix "ttbar") (fmap (*x)), logLogNormalP 0 0.2 x))
-  , ("sigma0", set (mSignal.element 0) &&& nonNegPrior)
-  , ("sigma1", set (mSignal.element 1) &&& nonNegPrior)
-  , ("sigma2", set (mSignal.element 2) &&& nonNegPrior)
-  , ("sigma3", set (mSignal.element 3) &&& nonNegPrior)
-  -- , ("smear", \x -> (set mSmears (linearCombM (1-x) x zeeSmear zeeSmear2), logNormalP 0 1 x))
-  , ("lumi", \x -> (over mLuminosity (*x), logLogNormalP 0 0.1 x))
-  ]
-
-  where
-    nonNegPrior x
-      | x < 0 = negate $ 1/0
-      | otherwise = 0
-
-
-myInitialParams :: Fractional a => Map Text a
-myInitialParams = M.fromList
-  [ ("ttbarnorm", 1)
-  , ("sigma0", 1)
-  , ("sigma1", 0.5)
-  , ("sigma2", 0.1)
-  , ("sigma3", 0.01)
-  -- , ("smear", 0.0)
-  , ("lumi", 1)
-  ]
-
-myParamRadii :: Fractional a => Map Text a
-myParamRadii = M.fromList
-  [ ("ttbarnorm", 0.1)
-  , ("sigma0", 0.1)
-  , ("sigma1", 0.01)
-  , ("sigma2", 0.01)
-  , ("sigma3", 0.001)
-  -- , ("smear", 0.25)
-  , ("lumi", 0.1)
-  ]
-
-zeeSmear :: Floating a => Mat a
-zeeSmear = sequenceA . fmap signorm $
-  [ [38200, 580, 2.23, 0.0888]
-  , [373, 3270, 99.0, 0.851]
-  , [4.73, 57.5, 503, 22.5]
-  , [0.313, 0.883, 13.6, 101.1]
-  ]
-
-zeeSmear2 :: Floating a => Mat a
-zeeSmear2 = sequenceA . fmap signorm $
-  [ [0.80, 0.15, 0.0, 0.0]
-  , [0.03, 0.90, 0.03, 0.0]
-  , [0.0, 0.09, 0.84, 0.07]
-  , [0.0, 0.0, 0.02, 0.92]
-  ]
-
-zeeData :: Hist Int
-zeeData = [44812, 3241, 494, 90]
-
--}
