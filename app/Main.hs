@@ -13,30 +13,34 @@
 
 module Main where
 
-import           Control.Arrow        ((&&&))
+import           Control.Arrow           ((&&&))
 import           Control.Lens
 import           Data.Aeson
 import           Data.Aeson.TH
-import           Data.Aeson.Types     (Parser, parseEither, typeMismatch)
-import qualified Data.ByteString.Lazy as BS
-import           Data.List            (intersperse)
-import           Data.Map.Strict      (Map)
-import qualified Data.Map.Strict      as M
-import           Data.Maybe           (fromMaybe, isNothing)
-import           Data.Text            (Text)
-import qualified Data.Text            as T
-import           GHC.Exts             (IsList (..))
+import           Data.Aeson.Types        (Parser, parseEither, typeMismatch)
+import qualified Data.ByteString.Lazy    as BS
+import           Data.List               (intersperse)
+import           Data.Map.Strict         (Map)
+import qualified Data.Map.Strict         as M
+import           Data.Maybe              (fromMaybe, isNothing)
+import           Data.Text               (Text)
+import qualified Data.Text               as T
+import           GHC.Exts                (IsList (..))
 import           GHC.Generics
 import           Linear
-import           List.Transformer     (ListT (..), Step (..))
-import qualified List.Transformer     as LT
-import           Options.Applicative  hiding (Parser)
-import qualified Options.Applicative  as OA
-import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
-                                       withFile)
+import           List.Transformer        (ListT (..), Step (..))
+import qualified List.Transformer        as LT
+import           Numeric.MCMC
+import           Options.Applicative     hiding (Parser)
+import qualified Options.Applicative     as OA
+import           System.IO               (IOMode (..), hPutStr, hPutStrLn,
+                                          withFile)
 
 import           MarkovChain
-import           Metropolis
+-- import           Metropolis
+import           Hamiltonian
+import           Numeric.AD              (grad)
+import qualified Numeric.AD.Mode.Reverse as R
 import           Probability
 
 
@@ -213,14 +217,15 @@ main = do
   parsed <- eitherDecode' <$> BS.readFile infile
   case parseEither parseModel =<< parsed of
     Left err -> print err
-    Right (dataH :: Hist Int, model, modelparams) -> do
+    Right (dataH, model, modelparams) -> do
 
-      let (start :: Map Text Double) = _mpInitialValue <$> modelparams
-          (radii :: Map Text Double) = _mpRadius <$> modelparams
-          (params :: Map Text (Param Double)) =
+      let start = _mpInitialValue <$> modelparams
+          radii = _mpRadius <$> modelparams
+          params =
             (\p -> (_unMV . _mpVariation) p &&& (_unPP . _mpPrior) p) <$> modelparams
-          llh = modelLogPosterior params model dataH :: Map Text Double -> Double
-          prop = weightedProposal (multibandMetropolis radii) llh
+          llh = modelLogPosterior params model dataH
+
+      let trans = slice 0.1
 
       g <- createSystemRandom
 
@@ -230,17 +235,18 @@ main = do
               Cons x l' -> return . Cons x $ takeEvery n l'
               Nil       -> return Nil
 
-      let chain = takeEvery nskip . LT.drop nburn $ runMC prop (T start $ llh start) g
+      let c = Chain (Target llh Nothing) (llh start) start Nothing
+          chain = takeEvery nskip . LT.drop nburn $ runMC trans c g
 
       withFile outfile WriteMode $ \f -> do
         hPutStrLn f . mconcat . intersperse ", " . fmap T.unpack $ "llh" : M.keys start
 
         LT.runListT . LT.take nsamps
           $ do
-            (T ps llhxs :: T (Map Text Double) Double) <- chain
-            LT.liftIO . print . modelPred . fst . appParams params model $ ps
-            LT.liftIO . hPutStr f $ show llhxs ++ ", "
-            LT.liftIO . hPutStrLn f $ mconcat . intersperse ", " . M.elems $ show <$> ps
+            Chain{..} <- chain
+            LT.liftIO . print . modelPred . fst . appParams params model $ chainPosition
+            LT.liftIO . hPutStr f $ show chainScore ++ ", "
+            LT.liftIO . hPutStrLn f $ mconcat . intersperse ", " . M.elems $ show <$> chainPosition
 
 
 
