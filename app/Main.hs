@@ -22,7 +22,7 @@ import qualified Data.ByteString.Lazy as BS
 import           Data.List            (intersperse)
 import           Data.Map.Strict      (Map)
 import qualified Data.Map.Strict      as M
-import           Data.Maybe           (fromMaybe)
+import           Data.Maybe           (fromMaybe, isNothing)
 import           Data.Text            (Text)
 import qualified Data.Text            as T
 import           GHC.Exts             (IsList (..))
@@ -34,7 +34,6 @@ import           Options.Applicative  hiding (Parser)
 import qualified Options.Applicative  as OA
 import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
                                        withFile)
-
 
 import           MarkovChain
 import           Metropolis
@@ -60,7 +59,7 @@ type Param a = (a -> (Model a -> Model a, a))
 
 -- TODO
 -- a model should actually take params as an argument
--- and return a reco spectrum as an output
+-- and return a reco spectrum as an output?
 data Model a =
   Model
     { _mBackgrounds :: Map Text (Hist a)
@@ -95,26 +94,38 @@ instance (Floating a, FromJSON a) => FromJSON (ParamPrior a) where
 
 newtype ModelVariation a = ModelVariation { _unMV :: a -> Model a -> Model a }
 
+
+parseModeling :: (FromJSON a, Num a) => Object -> Parser (ModelVariation a)
+parseModeling obj = do
+  mmVar <- obj .:? "MigrationMatrix"
+  bkgVars <- obj .:? "Backgrounds"
+
+
+  let
+    f x (Model bkgs sig mm lumi) =
+      let bkgs' = bkgVars <&> M.unionWith (\v v' -> (((1-x) *^ v) ^+^ (x *^ v'))) bkgs
+          mm' = mmVar <&> \m -> ((1-x) *!! mm) !+! (x *!! m)
+      in Model
+          (fromMaybe bkgs bkgs')
+          sig
+          (fromMaybe mm mm')
+          lumi
+
+  if isNothing mmVar && isNothing bkgVars
+    then fail "MigrationMatrix and Backgrounds are missing"
+    else return $ ModelVariation f
+
+parseSignal :: (FromJSON a, Num a) => Object -> Parser (ModelVariation a)
+parseSignal obj = do
+  s <- obj .: "Signal"
+  return . ModelVariation $ \x -> over mSignal ((x *^ s) ^+^)
+
+
 instance (Floating a, FromJSON a) => FromJSON (ModelVariation a) where
   parseJSON (String "Lumi") = return . ModelVariation $ \x -> over mLuminosity (*x)
 
-  parseJSON (Object o) = do
-    mmVar <- o .:? "MigrationMatrix"
-    bkgVars <- o .:? "Backgrounds"
-    sigVar <- o .:? "Signal"
-
-    let
-      f x (Model bkgs sig mm lumi) =
-        let bkgs' = bkgVars <&> M.unionWith (\v v' -> (((1-x) *^ v) ^+^ (x *^ v'))) bkgs
-            mm' = mmVar <&> \m -> ((1-x) *!! mm) !+! (x *!! m)
-            sig' = sigVar <&> \s -> ((1-x) *^ sig) ^+^ (x *^ s)
-        in Model
-            (fromMaybe bkgs bkgs')
-            (fromMaybe sig sig')
-            (fromMaybe mm mm')
-            lumi
-
-    return $ ModelVariation f
+  parseJSON (Object obj) =
+    parseModeling obj <|> parseSignal obj
 
   parseJSON invalid = typeMismatch "ModelVariation" invalid
 
@@ -144,10 +155,12 @@ parseModel = withObject "error: decodeModel was not given a json dictionary" $
     return (d, m, mps)
 
 
+-- TODO
+-- with ziplists (^+^) is not the same as liftA2 (+)
 modelPred :: (Num a) => Model a -> Hist a
 modelPred (Model bkgs sigs smears lumi) =
-  let bkgTot = foldl (^+^) (pure 0) bkgs
-  in fmap (*lumi) $ (+) <$> smears !* sigs <*> bkgTot
+  let bkgTot = foldl (liftA2 (+)) (pure 0) bkgs
+  in fmap (*lumi) $ (smears !* sigs) ^+^ bkgTot
 
 
 appParams :: Num a
@@ -225,7 +238,7 @@ main = do
         LT.runListT . LT.take nsamps
           $ do
             (T ps llhxs :: T (Map Text Double) Double) <- chain
-            -- LT.liftIO . print . modelPred . fst . appParams params model $ ps
+            LT.liftIO . print . modelPred . fst . appParams params model $ ps
             LT.liftIO . hPutStr f $ show llhxs ++ ", "
             LT.liftIO . hPutStrLn f $ mconcat . intersperse ", " . M.elems $ show <$> ps
 
