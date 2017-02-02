@@ -93,7 +93,7 @@ main = do
 
   parsed <- eitherDecode' <$> BS.readFile infile
 
-  case parseEither parseModel =<< parsed of
+  case parsed of
     Left err -> print err
     Right (dataH, model, modelparams) -> do
 
