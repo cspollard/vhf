@@ -12,39 +12,28 @@
 
 module Main where
 
-import           Control.Arrow        ((&&&))
-import           Control.Lens
 import           Data.Aeson
-import           Data.Aeson.TH
-import           Data.Aeson.Types     (Parser, parseEither, typeMismatch)
+import           Data.Aeson.Types     (Parser, parseEither)
 import qualified Data.ByteString.Lazy as BS
-import qualified Data.Foldable        as F
 import           Data.List            (intersperse)
 import           Data.Map.Strict      (Map)
 import qualified Data.Map.Strict      as M
-import           Data.Maybe           (fromMaybe, isNothing)
+import           Data.Maybe           (fromJust)
 import           Data.Text            (Text)
 import qualified Data.Text            as T
+import           Data.Vector          (Vector)
 import qualified Data.Vector          as V
 import           GHC.Exts             (IsList (..))
-import           GHC.Generics
-import           GHC.TypeLits
-import           Linear
-import           Linear.V
 import           List.Transformer     (ListT (..), Step (..))
 import qualified List.Transformer     as LT
-import           Numeric.AD           hiding (auto)
 import           Numeric.MCMC
 import           Options.Applicative  hiding (Parser)
 import qualified Options.Applicative  as OA
-import           System.IO            (BufferMode (..), IOMode (..), hPutStr,
-                                       hPutStrLn, hSetBuffering, stdout,
+import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
                                        withFile)
 
 import           MarkovChain
-import           Metropolis
 import           Model
-import           Probability
 
 
 data InArgs =
@@ -87,44 +76,59 @@ takeEvery n l = ListT $ do
     Cons x l' -> return . Cons x $ takeEvery n l'
     Nil       -> return Nil
 
+
+parseModel
+  :: (Floating a, FromJSON a, FromJSON b)
+  => Value -> Parser (Vector b, Model a, Map Text (ModelParam a))
+parseModel = withObject "error: parseModel was not given a json object" $
+  \o -> do
+    d <- o .: "Data"
+    m <- o .: "Nominal"
+    mps <- o .: "ModelVars"
+
+    return (d, m, mps)
+
 main :: IO ()
 main = do
   InArgs {..} <- execParser opts
 
-  parsed <- eitherDecode' <$> BS.readFile infile
+  values <- eitherDecode' <$> BS.readFile infile
 
-  case parsed of
+  case parseEither parseModel =<< values of
     Left err -> print err
-    Right (dataH, model, modelparams) -> do
+    Right (dataH :: Vector Int, model :: Model Double, modelparams) -> do
 
       g <- createSystemRandom
 
-      let keys = M.keys modelparams
-          legend = zip keys [0..]
-          mps = fromList $ M.elems modelparams
-          start = _mpInitialValue <$> mps :: V n Double
-          params = mps <&>
-            (\p -> (_unMV . _mpVariation) p &&& (_unPP . _mpPrior) p)
-          llh = modelLogPosterior params model dataH
-          sd = 2.84*2.84 / fromIntegral (length start)
-          trans = adaptiveMetropolis sd 0.0001 llh
-            -- metropolis 0.001
+      let (mpnames, mps) = V.unzip . V.fromList $ M.toList modelparams
+          start = mpInitialValue <$> mps
+          logPriors = unPP . mpLogPrior <$> mps
+          variations = mpVariation <$> mps
+          logLH = modelLogPosterior dataH model variations logPriors
+          -- sd = 2.84*2.84 / fromIntegral (length start)
+          trans = metropolis 0.001
+            -- adaptiveMetropolis sd 0.0001 lLH
             -- trans = concatAllT $ replicate nburn (metropolis 0.1) ++ repeat (slice 0.02)
             -- trans = concatAllT $ replicate nburn (metropolis 0.001)
             -- trans = hamiltonian 0.01 5
-          -- c = Chain (Target llh Nothing) (llh start) start Nothing
-          c = T (llh start) (AMInfo 2 start start start $ outer start start)
+          c =
+            Chain
+              (Target (fromJust . logLH) Nothing)
+              (fromJust . logLH $ start)
+              start
+              Nothing
+          -- c = T (logLH start) (AMInfo 2 start start start $ outer start start)
           chain =
             takeEvery nskip . LT.drop nburn $ runMC trans c g
 
       withFile outfile WriteMode $ \f -> do
-        hPutStrLn f . mconcat . intersperse ", " . fmap T.unpack $ "llh" : keys
+        hPutStrLn f . mconcat . intersperse ", " . fmap T.unpack
+          $ "llh" : V.toList mpnames
 
         LT.runListT . LT.take nsamps
           $ do
-            T x AMInfo{..} <- chain
-            -- LT.liftIO . print . modelPred . fst . appParams params model $ chainPosition
-            LT.liftIO . hPutStr f $ show x ++ ", "
+            Chain {..} <- chain
+            LT.liftIO . hPutStr f $ show chainScore ++ ", "
             LT.liftIO . hPutStrLn f
               . mconcat . intersperse ", " . toList
-              $ show <$> ampost
+              $ show <$> chainPosition
