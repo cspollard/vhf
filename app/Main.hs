@@ -97,7 +97,6 @@ main = do
   case parseEither parseModel =<< values of
     Left err -> print err
     Right (dataH :: Vector Int, model :: Model Double, modelparams) -> do
-
       g <- createSystemRandom
 
       let (mpnames, mps) = V.unzip . V.fromList $ M.toList modelparams
@@ -106,7 +105,7 @@ main = do
           variations = mpVariation <$> mps
           logLH = modelLogPosterior dataH model variations logPriors
           -- sd = 2.84*2.84 / fromIntegral (length start)
-          trans = metropolis 0.001
+          trans = metropolis 0.1
             -- adaptiveMetropolis sd 0.0001 lLH
             -- trans = concatAllT $ replicate nburn (metropolis 0.1) ++ repeat (slice 0.02)
             -- trans = concatAllT $ replicate nburn (metropolis 0.001)

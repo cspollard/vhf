@@ -20,8 +20,8 @@
 
     , "ModelVars" : {
         "lumi" : {
-            "InitialValue" : 1
-            , "LogPrior" : { "Normal" : {"Mu" : 1, "Sigma" : 0.1} }
+            "InitialValue" : 0
+            , "LogPrior" : { "Normal" : {"Mu" : 0, "Sigma" : 0.1} }
             , "Variation" : {
                 "Lumi" : 200
             }
