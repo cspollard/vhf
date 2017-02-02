@@ -17,7 +17,7 @@ cabal-version:       >=1.10
 
 executable run-unfold
   main-is:             Main.hs
-  other-modules:       Model
+  other-modules:       Model, MatrixHelpers
   -- other-extensions:
   build-depends:       base == 4.9.*
                      , hunfold == 0.1.*
