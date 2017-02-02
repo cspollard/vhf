@@ -1,6 +1,6 @@
 {
     "Data" :  [44812, 3241, 494, 90]
-    , "Model" : {
+    , "Nominal" : {
         "Backgrounds" : { "ttbar" : [1.95e-2, 8.38e-4, 1.85e-4, 0.0] }
         , "Signal" : [0, 0, 0, 0]
         , "Migration" :
@@ -13,11 +13,13 @@
         , "Luminosity" : 37000
     }
 
-    , "ModelParams" : {
+    , "ModelVars" : {
         "lumi" : {
-            "InitialValue" : 1
-            , "Prior" : { "LogNormal" : {"Mu" : 0, "Sigma" : 0.2} }
-            , "Variation" : "Lumi"
+            "InitialValue" : 0
+            , "LogPrior" : { "Normal" : {"Mu" : 0, "Sigma" : 0.1} }
+            , "Variation" : {
+                "Lumi" : 74000
+            }
         }
 
         , "ttbarnorm" : {

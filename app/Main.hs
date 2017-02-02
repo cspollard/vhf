@@ -23,16 +23,17 @@ import           Data.Text            (Text)
 import qualified Data.Text            as T
 import           Data.Vector          (Vector)
 import qualified Data.Vector          as V
-import           GHC.Exts             (IsList (..))
+import           Linear
 import           List.Transformer     (ListT (..), Step (..))
 import qualified List.Transformer     as LT
-import           Numeric.MCMC
+-- import           Numeric.MCMC
 import           Options.Applicative  hiding (Parser)
 import qualified Options.Applicative  as OA
 import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
                                        withFile)
 
 import           MarkovChain
+import           Metropolis
 import           Model
 
 
@@ -71,10 +72,21 @@ everyLT n f = go 0
 
 takeEvery :: Monad m => Int -> ListT m a -> ListT m a
 takeEvery n l = ListT $ do
-  c <- next $ LT.drop n l
+  c <- next $ LT.drop (n-1) l
   case c of
     Cons x l' -> return . Cons x $ takeEvery n l'
     Nil       -> return Nil
+
+
+dropWhileL :: Monad m => (a -> Bool) -> ListT m a -> ListT m a
+dropWhileL f l = ListT $ do
+  c <- next l
+  case c of
+    Cons x l' ->
+      if f x
+        then next $ dropWhileL f l'
+        else return c
+    Nil -> return Nil
 
 
 parseModel
@@ -87,6 +99,7 @@ parseModel = withObject "error: parseModel was not given a json object" $
     mps <- o .: "ModelVars"
 
     return (d, m, mps)
+
 
 main :: IO ()
 main = do
@@ -103,22 +116,20 @@ main = do
           start = mpInitialValue <$> mps
           logPriors = unPP . mpLogPrior <$> mps
           variations = mpVariation <$> mps
-          logLH = modelLogPosterior dataH model variations logPriors
-          -- sd = 2.84*2.84 / fromIntegral (length start)
-          trans = metropolis 0.1
-            -- adaptiveMetropolis sd 0.0001 lLH
-            -- trans = concatAllT $ replicate nburn (metropolis 0.1) ++ repeat (slice 0.02)
-            -- trans = concatAllT $ replicate nburn (metropolis 0.001)
-            -- trans = hamiltonian 0.01 5
-          c =
-            Chain
-              (Target (fromJust . logLH) Nothing)
-              (fromJust . logLH $ start)
-              start
-              Nothing
-          -- c = T (logLH start) (AMInfo 2 start start start $ outer start start)
+          logLH = fromJust . modelLogPosterior dataH model variations logPriors
+
+      let radii = const 0.5 <$> start
+          cov0 = outer radii radii
+          ami = AMInfo 1 start start start cov0
+          c = T (logLH start) ami
+          sd = 2.4*2.4 / fromIntegral (length start)
+          eps = 0.1
+          trans = adaptiveMetropolis (fromIntegral nburn) cov0 sd eps logLH
           chain =
-            takeEvery nskip . LT.drop nburn $ runMC trans c g
+            takeEvery nskip
+            . dropWhileL ((< fromIntegral nburn) . amt . sndT)
+            $ runMC trans c g
+
 
       withFile outfile WriteMode $ \f -> do
         hPutStrLn f . mconcat . intersperse ", " . fmap T.unpack
@@ -126,8 +137,21 @@ main = do
 
         LT.runListT . LT.take nsamps
           $ do
-            Chain {..} <- chain
-            LT.liftIO . hPutStr f $ show chainScore ++ ", "
-            LT.liftIO . hPutStrLn f
-              . mconcat . intersperse ", " . toList
-              $ show <$> chainPosition
+            T x AMInfo{..} <- chain
+            LT.liftIO $ do
+              print "t:"
+              print amt
+
+              print "pos:"
+              print ampost
+
+              print "avg:"
+              print amavgt
+
+              print "cov:"
+              print amcovt
+
+              hPutStr f $ show x ++ ", "
+              hPutStrLn f
+                . mconcat . intersperse ", " . V.toList
+                $ show <$> ampost
