@@ -16,14 +16,19 @@ module MatrixHelpers
   , reifyMatrix
   , reifyMatrix1
   , reifyMatrix2
+  , cholesky
   ) where
 
+import           Control.Applicative
+import           Control.Lens
+import           Data.Monoid
 import           Data.Proxy
-import           Data.Vector  (Vector)
-import qualified Data.Vector  as V
+import           Data.Vector         (Vector)
+import qualified Data.Vector         as V
 import           GHC.TypeLits
-import           Linear       as X
-import           Linear.V     as X
+import           Linear              as X
+import           Linear.Trace        as X
+import           Linear.V            as X
 
 type M (n :: Nat) (m :: Nat) a = V n (V m a)
 
@@ -89,10 +94,52 @@ catV (V v) (V v') = V $ v V.++ v'
 zeroM :: (Dim m, Dim n, Num a) => M n m a
 zeroM = pure zero
 
+
+
+cholesky
+  :: forall n a. (Floating a, Conjugate a, KnownNat n, 1 <= n)
+  => M n n a -> Maybe (M n n a)
+cholesky a = l
+  where
+    l = f a
+
+    l2 = liftA2 (!*!) l l
+    midx m i j = (m ^? ix i) >>= (^? ix j)
+
+    -- TODO
+    -- why is the trace instance for V failing?
+    -- da = diagonal a
+    -- dl = diagonal <$> l
+
+    f :: M n n a -> Maybe (M n n a)
+    f = itraverse (itraverse . h)
+
+    h :: Int -> Int -> a -> Maybe a
+    h i j _
+      | i < j = Just 0
+
+      | i == j = do
+        x <- midx a i i
+        y <- s i j
+        return . sqrt $ x - y
+
+      | i > j = do
+        l' <- l
+        x <- midx l' i i
+        y <- midx a i j
+        z <- s i j
+        return $ (y - z) / x
+
+
+    s i j = do
+      v <- (^? ix i) =<< l2
+      return . getSum $ foldMapOf (itakingWhile (\k _ -> k < j) folded) Sum v
+
+
 {-
 -- TODO
 -- TODO
--- HERE!
+-- this is not at all validated.
 cholesky
   :: forall n a. (Floating a, Conjugate a, KnownNat n, 1 <= n)
   => M n n a -> M n n a
@@ -116,7 +163,5 @@ cholesky m =
           x = zero `consV` identity
           next :: M (k-1) (k-1) a
           next = transpose . tailV . transpose . tailV $ m
-          -- TODO
-          -- this is L; need to dot it with the L that comes with (k-1)
       in transpose (consV l (transpose x)) !*! (consV s (transpose (pure 0 `consV` f next)))
 -}
