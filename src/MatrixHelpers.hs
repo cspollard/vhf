@@ -16,6 +16,8 @@ module MatrixHelpers
   , reifyMatrix
   , reifyMatrix1
   , reifyMatrix2
+  , tailV, headV, consV, snocV
+  , catV, zeroM
   , cholesky
   ) where
 
@@ -25,9 +27,9 @@ import           Data.Monoid
 import           Data.Proxy
 import           Data.Vector         (Vector)
 import qualified Data.Vector         as V
+import           Debug.Trace
 import           GHC.TypeLits
 import           Linear              as X
-import           Linear.Trace        as X
 import           Linear.V            as X
 
 type M (n :: Nat) (m :: Nat) a = V n (V m a)
@@ -97,13 +99,13 @@ zeroM = pure zero
 
 
 cholesky
-  :: forall n a. (Floating a, Conjugate a, KnownNat n, 1 <= n)
+  :: forall n a. (Floating a, KnownNat n, Show a)
   => M n n a -> Maybe (M n n a)
 cholesky a = l
   where
     l = f a
 
-    l2 = liftA2 (!*!) l l
+    llt = liftA2 (!*!) l $ transpose <$> l
     midx m i j = (m ^? ix i) >>= (^? ix j)
 
     -- TODO
@@ -116,52 +118,23 @@ cholesky a = l
 
     h :: Int -> Int -> a -> Maybe a
     h i j _
-      | i < j = Just 0
+      | i < j =
+        traceShow "in h i j; i < j" $ Just 0
 
       | i == j = do
-        x <- midx a i i
+        x <- traceShow "in h i j; i = j" $ midx a i i
         y <- s i j
         return . sqrt $ x - y
 
       | i > j = do
-        l' <- l
+        l' <- traceShow "in h i j; i > j" $ l
         x <- midx l' i i
         y <- midx a i j
         z <- s i j
         return $ (y - z) / x
 
 
+    s 0 0 = traceShow "in s 0 0" $ Just 0
     s i j = do
-      v <- (^? ix i) =<< l2
+      v <- traceShow "in s i j" $ (^? ix i) =<< llt
       return . getSum $ foldMapOf (itakingWhile (\k _ -> k < j) folded) Sum v
-
-
-{-
--- TODO
--- TODO
--- this is not at all validated.
-cholesky
-  :: forall n a. (Floating a, Conjugate a, KnownNat n, 1 <= n)
-  => M n n a -> M n n a
-cholesky m =
-  where
-    r = zero
-    s = 1 `consV` r
-    t = r `snocV` 1
-    -- upp = identity `catV` zeroM
-    -- low = transpose $ zeroM `catV` identity
-    f :: forall k. (KnownNat k, 1 <= k) => M k k a -> M k k a
-    f m =
-      if natVal (Proxy :: Proxy n) == 1
-        then identity
-        else f m
-      let t = headV m
-          saii = sqrt $ headV t
-          bi = (/saii) . conjugate <$> tailV t
-          l = saii `consV` bi
-          x :: M k (k-1) a
-          x = zero `consV` identity
-          next :: M (k-1) (k-1) a
-          next = transpose . tailV . transpose . tailV $ m
-      in transpose (consV l (transpose x)) !*! (consV s (transpose (pure 0 `consV` f next)))
--}
