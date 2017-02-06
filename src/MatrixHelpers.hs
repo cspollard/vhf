@@ -42,7 +42,7 @@ toVectorM :: M n m a -> Vector (Vector a)
 toVectorM = toVector . fmap toVector
 
 
-reifyMatrix :: Vector (Vector a) -> (forall n m. (Dim n, Dim m) => M n m a -> r) -> Maybe r
+reifyMatrix :: Vector (Vector a) -> (forall n m. (KnownNat n, KnownNat m) => M n m a -> r) -> Maybe r
 reifyMatrix m f = do
   let l1 = V.length m
       l2 = if l1 == 0 then 0 else V.length (m V.! 0)
