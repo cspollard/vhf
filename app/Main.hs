@@ -148,8 +148,8 @@ main = do
               (logLH (start' :: Vector Double))
               (start' :: Vector Double)
               Nothing
-          nsteps = 5
-          eps = 0.0001
+          nsteps = 10
+          eps = 0.01
           trans = hamiltonian eps nsteps
           chain =
             takeEvery nskip
