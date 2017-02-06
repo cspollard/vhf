@@ -17,9 +17,6 @@ module MatrixHelpers
   , reifyMatrix1
   , reifyMatrix2
   , reifySqMatrix
-  -- , tailV, headV, consV, snocV
-  -- , catV, zeroM
-  -- , cholesky
   ) where
 
 import           Data.Proxy
