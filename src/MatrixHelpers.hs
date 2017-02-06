@@ -16,21 +16,17 @@ module MatrixHelpers
   , reifyMatrix
   , reifyMatrix1
   , reifyMatrix2
-  , tailV, headV, consV, snocV
-  , catV, zeroM
-  , cholesky
+  -- , tailV, headV, consV, snocV
+  -- , catV, zeroM
+  -- , cholesky
   ) where
 
-import           Control.Applicative
-import           Control.Lens
-import           Data.Monoid
 import           Data.Proxy
-import           Data.Vector         (Vector)
-import qualified Data.Vector         as V
-import           Debug.Trace
+import           Data.Vector  (Vector)
+import qualified Data.Vector  as V
 import           GHC.TypeLits
-import           Linear              as X
-import           Linear.V            as X
+import           Linear       as X
+import           Linear.V     as X
 
 type M (n :: Nat) (m :: Nat) a = V n (V m a)
 
@@ -78,6 +74,7 @@ reifyMatrix2 m f = do
 
 
 
+{-
 tailV :: V n a -> V (n-1) a
 tailV (V v) = V $ V.tail v
 
@@ -97,6 +94,13 @@ zeroM :: (Dim m, Dim n, Num a) => M n m a
 zeroM = pure zero
 
 
+-- TODO
+-- find transformation to eigenbasis and apply to N(x, 1)...
+-- take square root
+-- go back to original basis
+
+
+housholder m = undefined
 
 cholesky
   :: forall n a. (Floating a, KnownNat n, Show a)
@@ -138,3 +142,4 @@ cholesky a = l
     s i j = do
       v <- traceShow "in s i j" $ (^? ix i) =<< llt
       return . getSum $ foldMapOf (itakingWhile (\k _ -> k < j) folded) Sum v
+-}

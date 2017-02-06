@@ -23,11 +23,10 @@ import           Data.Text            (Text)
 import qualified Data.Text            as T
 import           Data.Vector          (Vector)
 import qualified Data.Vector          as V
-import           Linear
 import           List.Transformer     (ListT (..), Step (..))
 import qualified List.Transformer     as LT
--- import           Numeric.MCMC
-import           Options.Applicative  hiding (Parser)
+import           Numeric.AD
+import           Options.Applicative  hiding (Parser, auto)
 import qualified Options.Applicative  as OA
 import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
                                        withFile)
@@ -35,6 +34,7 @@ import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
 import           MarkovChain
 import           Metropolis
 import           Model
+import           Numeric.MCMC
 
 
 data InArgs =
@@ -48,9 +48,9 @@ data InArgs =
 
 inArgs :: OA.Parser InArgs
 inArgs = InArgs
-    <$> option auto (long "burn")
-    <*> option auto (long "skip")
-    <*> option auto (long "samples")
+    <$> option OA.auto (long "burn")
+    <*> option OA.auto (long "skip")
+    <*> option OA.auto (long "samples")
     <*> strOption (long "outfile")
     <*> strOption (long "infile")
 
@@ -90,7 +90,7 @@ dropWhileL f l = ListT $ do
 
 
 parseModel
-  :: (Floating a, FromJSON a, FromJSON b)
+  :: (FromJSON a, FromJSON b)
   => Value -> Parser (Vector b, Model a, Map Text (ModelParam a))
 parseModel = withObject "error: parseModel was not given a json object" $
   \o -> do
@@ -109,25 +109,51 @@ main = do
 
   case parseEither parseModel =<< values of
     Left err -> print err
-    Right (dataH :: Vector Int, model :: Model Double, modelparams) -> do
+    Right (dataH :: Vector Int, model :: Model Double, modelparams :: Map Text (ModelParam Double)) -> do
+
       g <- createSystemRandom
 
-      let (mpnames, mps) = V.unzip . V.fromList $ M.toList modelparams
-          start = mpInitialValue <$> mps
-          logPriors = unPP . mpLogPrior <$> mps
-          variations = mpVariation <$> mps
-          logLH = fromJust . modelLogPosterior dataH model variations logPriors
+      let s = V.unzip . V.fromList $ M.toList modelparams
+          mpnames = fst s
+          mps = snd s
+          start = fmap _mpInitialValue mps
+          logPriors = fmap _mpLogPrior mps
+          variations :: Vector (ModelVar Double)
+          variations = fmap _mpVariation mps
 
-      let radii = const 0.5 <$> start
-          cov0 = outer radii radii
-          ami = AMInfo 1 start start start cov0
-          c = T (logLH start) ami
-          sd = 2.4*2.4 / fromIntegral (length start)
-          eps = 0.1
-          trans = adaptiveMetropolis (fromIntegral nburn) cov0 sd eps logLH
+
+      let logLH :: forall a. (Floating a, Ord a, Mode a, Scalar a ~ Double) => Vector a -> a
+          logLH =
+            fromJust
+            . modelLogPosterior
+                dataH
+                (fmap auto model)
+                (fmap (fmap auto) variations)
+                (fmap (ppToFunc . fmap auto) logPriors)
+          gLogLH :: Vector Double -> Vector Double
+          gLogLH = grad logLH
+          -- xs = take 100 $ conjugateGradientAscent logLH start
+          start' = start
+
+      print "start'"
+      print start'
+      print "llh start"
+      print $ logLH start'
+      print $ appVars variations start' model
+
+
+      let c =
+            Chain
+              (Target logLH $ Just gLogLH)
+              (logLH (start' :: Vector Double))
+              (start' :: Vector Double)
+              Nothing
+          nsteps = 5
+          eps = 0.0001
+          trans = hamiltonian eps nsteps
           chain =
             takeEvery nskip
-            . dropWhileL ((< fromIntegral nburn) . amt . sndT)
+            . LT.drop nburn
             $ runMC trans c g
 
 
@@ -137,21 +163,9 @@ main = do
 
         LT.runListT . LT.take nsamps
           $ do
-            T x AMInfo{..} <- chain
+            Chain{..} <- chain
             LT.liftIO $ do
-              print "t:"
-              print amt
-
-              print "pos:"
-              print ampost
-
-              print "avg:"
-              print amavgt
-
-              print "cov:"
-              print amcovt
-
-              hPutStr f $ show x ++ ", "
+              hPutStr f $ show chainScore ++ ", "
               hPutStrLn f
                 . mconcat . intersperse ", " . V.toList
-                $ show <$> ampost
+                $ show <$> chainPosition

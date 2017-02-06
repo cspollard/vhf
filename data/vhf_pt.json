@@ -1,16 +1,16 @@
 {
     "Data" :  [44812, 3241, 494, 90]
     , "Nominal" : {
-        "Backgrounds" : { "ttbar" : [1.95e-2, 8.38e-4, 1.85e-4, 0.0] }
-        , "Signal" : [0, 0, 0, 0]
-        , "Migration" :
+        "Bkgs" : { "ttbar" : [1.95e-2, 8.38e-4, 1.85e-4, 0.0] }
+        , "Sig" : [0, 0, 0, 0]
+        , "Mig" :
             [ [0.804, 1.22e-2, 6.57e-3, 2.20e-3]
             , [1.47e-2, 0.859, 9.61e-2, 7.49e-3]
             , [5.47e-5, 2.52e-2, 0.815, 0.111]
             , [2.12e-6, 2.10e-4, 3.55e-2, 0.810]
             ]
 
-        , "Luminosity" : 37000
+        , "Lumi" : 37000
     }
 
     , "ModelVars" : {
@@ -24,41 +24,41 @@
 
         , "ttbarnorm" : {
             "InitialValue" : 0
-            , "Prior" : { "Normal" : {"Mu" : 0, "Sigma" : 0.2} }
+            , "LogPrior" : { "Normal" : {"Mu" : 0, "Sigma" : 0.2} }
             , "Variation" : {
-                "Backgrounds" : { "ttbar" : [3.9e-2, 1.676e-3, 3.7e-4, 0.0] }
+                "Bkgs" : { "ttbar" : [3.9e-2, 1.676e-3, 3.7e-4, 0.0] }
             }
         }
 
         , "sigma0" : {
             "InitialValue" : 1
-            , "Prior" : "Flat"
+            , "LogPrior" : "Flat"
             , "Variation" : {
-                "Signal" : [1, 0, 0, 0]
+                "Sig" : [1, 0, 0, 0]
             }
         }
 
         , "sigma1" : {
             "InitialValue" : 0.1
-            , "Prior" : "Flat"
+            , "LogPrior" : "Flat"
             , "Variation" : {
-                "Signal" : [0, 1, 0, 0]
+                "Sig" : [0, 1, 0, 0]
             }
         }
 
         , "sigma2" : {
             "InitialValue" : 0.01
-            , "Prior" : "Flat"
+            , "LogPrior" : "Flat"
             , "Variation" : {
-                "Signal" : [0, 0, 1, 0]
+                "Sig" : [0, 0, 1, 0]
             }
         }
 
         , "sigma3" : {
             "InitialValue" : 0.001
-            , "Prior" : "Flat"
+            , "LogPrior" : "Flat"
             , "Variation" : {
-                "Signal" : [0, 0, 0, 1]
+                "Sig" : [0, 0, 0, 1]
             }
         }
     }
