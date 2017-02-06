@@ -12,7 +12,6 @@
 
 module Main where
 
-import           Control.Monad        ((>=>))
 import           Data.Aeson
 import           Data.Aeson.Types     (Parser, parseEither)
 import qualified Data.ByteString.Lazy as BS
@@ -37,7 +36,6 @@ import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
 import           InMatrix             hiding (Vector, toVector)
 import           MarkovChain
 import           MatrixHelpers
-import           Metropolis
 import           Model
 
 
@@ -150,8 +148,6 @@ main = do
           cov' = itT !*! cov !*! it
           transform v = (t !* v) ^+^ start'
           itransform v' = it !* (v' ^-^ start')
-          eps = 0.1
-          nsteps = 5
 
 
       print mpnames
@@ -181,8 +177,7 @@ main = do
               (logLH (start' :: Vector Double))
               (itransform start' :: Vector Double)
               Nothing
-          trans = Numeric.MCMC.metropolis (1 / fromIntegral nskip)
-            -- hamiltonian eps nsteps
+          trans = metropolis (1 / fromIntegral nskip)
           chain =
             takeEvery nskip
             . LT.drop nburn
