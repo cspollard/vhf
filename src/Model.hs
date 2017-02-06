@@ -35,11 +35,12 @@ import GHC.Generics
 import Data.Map (Map)
 import Data.Vector (Vector)
 import Data.Text (Text)
-import Probability
-import MatrixHelpers
 import Data.Aeson
 import Data.Aeson.Types
 import Control.Applicative ((<|>))
+
+import Probability
+import Matrix
 
 data Model a =
   Model
@@ -173,7 +174,7 @@ appVars mvs ps m = foldM (fmap . addM) m ms
 
 
 mergeBkgs :: (KnownNat n, Num a) => a -> Map Text (V n a) -> Map Text (V n a) -> Map Text (V n a)
-mergeBkgs x b = fmap (x *^) . liftI2 (^-^) b
+mergeBkgs x b = fmap (x *^) . liftU2 (^-^) b
 
 mergeSig :: (KnownNat n, Num a) => a -> V n a -> V n a -> V n a
 mergeSig x s = (x *^) . (^-^ s)

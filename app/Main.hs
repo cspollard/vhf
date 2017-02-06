@@ -35,7 +35,7 @@ import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
 
 import           InMatrix             hiding (Vector, toVector)
 import           MarkovChain
-import           MatrixHelpers
+import           Matrix
 import           Model
 
 
@@ -138,37 +138,14 @@ main = do
           xs = take 100 $ conjugateGradientAscent logLH start
           start' = last xs
           hess' = hessian (negate . logLH) start'
-          cov :: Vector (Vector Double)
+          -- cov :: Vector (Vector Double)
           cov = invM hess'
-          -- TODO
-          -- we have the transform to "ideal" variables
           t = inM (chol . sym) cov
           it = inM inv t
           itT = fromJust $ reifyMatrix it (toVectorM . transpose)
           cov' = itT !*! cov !*! it
           transform v = (t !* v) ^+^ start'
           itransform v' = it !* (v' ^-^ start')
-
-
-      print mpnames
-      print "start'"
-      print start'
-      print "llh start"
-      print $ logLH start'
-      print "gradient ascent"
-      print xs
-      print "initial model"
-      print $ appVars variations start' model
-      print "hessian"
-      print hess'
-      print "covariance"
-      print cov
-      print "transform"
-      print t
-      print "transformed start"
-      print $ itransform start'
-      print "transformed covariance"
-      print cov'
 
 
       let c =

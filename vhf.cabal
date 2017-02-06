@@ -17,7 +17,7 @@ cabal-version:       >=1.10
 
 executable run-unfold
   main-is:             Main.hs
-  other-modules:       Model, MatrixHelpers
+  other-modules:       Model
   -- other-extensions:
   build-depends:       base == 4.9.*
                      , hunfold == 0.1.*
@@ -34,8 +34,6 @@ executable run-unfold
                      , bytestring == 0.10.*
                      , declarative == 0.2.*
                      , ad == 4.3.*
-                     , ghc-typelits-natnormalise == 0.5.*
-                     , ghc-typelits-knownnat == 0.2.*
   hs-source-dirs:      app/
                      , src/
   default-language:    Haskell2010
