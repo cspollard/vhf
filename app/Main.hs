@@ -12,6 +12,7 @@
 
 module Main where
 
+import           Control.Monad        ((>=>))
 import           Data.Aeson
 import           Data.Aeson.Types     (Parser, parseEither)
 import qualified Data.ByteString.Lazy as BS
@@ -23,18 +24,21 @@ import           Data.Text            (Text)
 import qualified Data.Text            as T
 import           Data.Vector          (Vector)
 import qualified Data.Vector          as V
+import           Linear.Matrix
 import           List.Transformer     (ListT (..), Step (..))
 import qualified List.Transformer     as LT
 import           Numeric.AD
+import           Numeric.MCMC
 import           Options.Applicative  hiding (Parser, auto)
 import qualified Options.Applicative  as OA
 import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
                                        withFile)
 
+import           InMatrix             hiding (Vector, toVector)
 import           MarkovChain
+import           MatrixHelpers
 import           Metropolis
 import           Model
-import           Numeric.MCMC
 
 
 data InArgs =
@@ -132,25 +136,55 @@ main = do
                 (fmap (ppToFunc . fmap auto) logPriors)
           gLogLH :: Vector Double -> Vector Double
           gLogLH = grad logLH
-          -- xs = take 100 $ conjugateGradientAscent logLH start
-          start' = start
+          xs = take 100 $ conjugateGradientAscent logLH start
+          start' = last xs
+          hess' = hessian (negate . logLH) start'
+          cov :: Vector (Vector Double)
+          cov = invM hess'
+          -- TODO
+          -- we have the transform to "ideal" variables
+          t = inM (chol . sym) cov
+          it = inM inv t
+          itT = fromJust $ reifyMatrix it (toVectorM . transpose)
+          cov' = itT !*! cov !*! it
+          transform v = (t !* v) ^+^ start'
+          itransform v' = it !* (v' ^-^ start')
+          radii = fromJust $ reifySqMatrix cov' (toVector . diagonal)
+          eps = minimum radii / 5
+          nsteps = ceiling (maximum radii / eps)
 
+
+      print mpnames
       print "start'"
       print start'
       print "llh start"
       print $ logLH start'
+      print "gradient ascent"
+      print xs
+      print "initial model"
       print $ appVars variations start' model
+      print "hessian"
+      print hess'
+      print "covariance"
+      print cov
+      print "radii"
+      print radii
+      print "transform"
+      print t
+      print "transformed start"
+      print $ itransform start'
+      print "transformed covariance"
+      print cov'
 
 
       let c =
             Chain
-              (Target logLH $ Just gLogLH)
+              (Target (logLH . transform) $ Just (gLogLH . transform))
               (logLH (start' :: Vector Double))
-              (start' :: Vector Double)
+              (itransform start' :: Vector Double)
               Nothing
-          nsteps = 10
-          eps = 0.01
-          trans = hamiltonian eps nsteps
+          trans = Numeric.MCMC.metropolis 1
+            -- hamiltonian eps nsteps
           chain =
             takeEvery nskip
             . LT.drop nburn
@@ -164,8 +198,9 @@ main = do
         LT.runListT . LT.take nsamps
           $ do
             Chain{..} <- chain
+            LT.liftIO $ print chainPosition
             LT.liftIO $ do
               hPutStr f $ show chainScore ++ ", "
               hPutStrLn f
                 . mconcat . intersperse ", " . V.toList
-                $ show <$> chainPosition
+                $ show <$> transform chainPosition

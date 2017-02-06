@@ -16,6 +16,7 @@ module MatrixHelpers
   , reifyMatrix
   , reifyMatrix1
   , reifyMatrix2
+  , reifySqMatrix
   -- , tailV, headV, consV, snocV
   -- , catV, zeroM
   -- , cholesky
@@ -29,6 +30,8 @@ import           Linear       as X
 import           Linear.V     as X
 
 type M (n :: Nat) (m :: Nat) a = V n (V m a)
+
+instance KnownNat n => Trace (V n)
 
 fromVectorM :: (Dim n, Dim m) => Vector (Vector a) -> Maybe (M n m a)
 fromVectorM m = do
@@ -48,6 +51,15 @@ reifyMatrix m f = do
       \(Proxy :: Proxy k2) -> do
         (mV :: M k2 k1 a) <- fromVectorM m
         return $ f mV
+
+reifySqMatrix
+  :: forall a r. Vector (Vector a) -> (forall n. KnownNat n => M n n a -> r) -> Maybe r
+reifySqMatrix m f = do
+  let l1 = V.length m
+  reifyDimNat l1 $
+    \(Proxy :: Proxy n) -> do
+      (mV :: M n n a) <- fromVectorM m
+      return $ f mV
 
 
 reifyMatrix1
