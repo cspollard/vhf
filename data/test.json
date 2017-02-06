@@ -2,9 +2,9 @@
     "comment" : "here the data has been set to L*(m*v+b)
                   where L is the luminosity, m is the migration matrix,
                   v is the signal vector, and b is the background"
-    , "true spectrum" : [10, 5, 2.5, 1.25]
+    , "true spectrum" : [10, 5, 2.5]
 
-    , "Data" : [925, 512, 256, 125]
+    , "Data" : [925, 512, 250, 25]
     , "Nominal" : {
         "Bkgs" : { "ttbar" : [1, 0.5, 0.25, 0.125] }
         , "Sig" : [0, 0, 0]

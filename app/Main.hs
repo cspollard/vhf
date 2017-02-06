@@ -125,10 +125,11 @@ main = do
           variations :: Vector (ModelVar Double)
           variations = fmap _mpVariation mps
 
+      let toError = either error id
 
       let logLH :: forall a. (Floating a, Ord a, Mode a, Scalar a ~ Double) => Vector a -> a
           logLH =
-            fromJust
+            toError
             . modelLogPosterior
                 dataH
                 (fmap auto model)
@@ -149,9 +150,8 @@ main = do
           cov' = itT !*! cov !*! it
           transform v = (t !* v) ^+^ start'
           itransform v' = it !* (v' ^-^ start')
-          radii = fromJust $ reifySqMatrix cov' (toVector . diagonal)
-          eps = minimum radii / 5
-          nsteps = ceiling (maximum radii / eps)
+          eps = 0.1
+          nsteps = 5
 
 
       print mpnames
@@ -167,8 +167,6 @@ main = do
       print hess'
       print "covariance"
       print cov
-      print "radii"
-      print radii
       print "transform"
       print t
       print "transformed start"
@@ -183,7 +181,7 @@ main = do
               (logLH (start' :: Vector Double))
               (itransform start' :: Vector Double)
               Nothing
-          trans = Numeric.MCMC.metropolis 1
+          trans = Numeric.MCMC.metropolis (1 / fromIntegral nskip)
             -- hamiltonian eps nsteps
           chain =
             takeEvery nskip
@@ -199,6 +197,9 @@ main = do
           $ do
             Chain{..} <- chain
             LT.liftIO $ print chainPosition
+            LT.liftIO . print . fmap prediction
+              . appVars variations (transform chainPosition)
+              $ model
             LT.liftIO $ do
               hPutStr f $ show chainScore ++ ", "
               hPutStrLn f
