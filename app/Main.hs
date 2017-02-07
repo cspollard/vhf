@@ -33,7 +33,7 @@ import qualified Options.Applicative  as OA
 import           System.IO            (IOMode (..), hPutStr, hPutStrLn,
                                        withFile)
 
-import           InMatrix             hiding (Vector, toVector)
+import           InMatrix             hiding (transpose)
 import           MarkovChain
 import           Matrix
 import           Model
@@ -139,9 +139,9 @@ main = do
           start' = last xs
           hess' = hessian (negate . logLH) start'
           -- cov :: Vector (Vector Double)
-          cov = invM hess'
-          t = inM (chol . sym) cov
-          it = inM inv t
+          cov = toError $ invM hess'
+          t = cholM cov
+          it = toError $ invM t
           itT = fromJust $ reifyMatrix it (toVectorM . transpose)
           cov' = itT !*! cov !*! it
           transform v = (t !* v) ^+^ start'
