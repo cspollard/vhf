@@ -18,7 +18,7 @@ module Model
   , ModelVar(..)
   , mvBkgs, mvSig, mvMig, mvLumi
   , ModelParam(..)
-  , mpInitialValue, mpLogPrior, mpVariation
+  , mpInitialValue, mpPrior, mpVariation
   , ParamPrior(..)
   , ppToFunc
   , modelLogLikelihood
@@ -105,7 +105,7 @@ ppToFunc (LogNormal m s) = logLogNormalP m s
 data ModelParam a =
   ModelParam
     { _mpInitialValue :: a
-    , _mpLogPrior        :: ParamPrior a
+    , _mpPrior        :: ParamPrior a
     , _mpVariation    :: ModelVar a
     } deriving (Generic, Functor)
 

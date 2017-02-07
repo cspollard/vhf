@@ -16,7 +16,7 @@
     , "ModelVars" : {
         "lumi" : {
             "InitialValue" : 0
-            , "LogPrior" : { "Normal" : {"Mu" : 0, "Sigma" : 0.1} }
+            , "Prior" : { "Normal" : {"Mu" : 0, "Sigma" : 0.1} }
             , "Variation" : {
                 "Lumi" : 74000
             }
@@ -24,7 +24,7 @@
 
         , "ttbarnorm" : {
             "InitialValue" : 0
-            , "LogPrior" : { "Normal" : {"Mu" : 0, "Sigma" : 0.2} }
+            , "Prior" : { "Normal" : {"Mu" : 0, "Sigma" : 0.2} }
             , "Variation" : {
                 "Bkgs" : { "ttbar" : [3.9e-2, 1.676e-3, 3.7e-4, 0.0] }
             }
@@ -32,7 +32,7 @@
 
         , "sigma0" : {
             "InitialValue" : 1
-            , "LogPrior" : "Flat"
+            , "Prior" : "Flat"
             , "Variation" : {
                 "Sig" : [1, 0, 0, 0]
             }
@@ -40,7 +40,7 @@
 
         , "sigma1" : {
             "InitialValue" : 0.1
-            , "LogPrior" : "Flat"
+            , "Prior" : "Flat"
             , "Variation" : {
                 "Sig" : [0, 1, 0, 0]
             }
@@ -48,15 +48,15 @@
 
         , "sigma2" : {
             "InitialValue" : 0.01
-            , "LogPrior" : "Flat"
+            , "Prior" : "Flat"
             , "Variation" : {
                 "Sig" : [0, 0, 1, 0]
             }
         }
 
         , "sigma3" : {
-            "InitialValue" : 0.001
-            , "LogPrior" : "Flat"
+            "InitialValue" : 0.003
+            , "Prior" : "Flat"
             , "Variation" : {
                 "Sig" : [0, 0, 0, 1]
             }
