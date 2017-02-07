@@ -18,7 +18,6 @@ import qualified Data.ByteString.Lazy as BS
 import           Data.List            (intersperse)
 import           Data.Map.Strict      (Map)
 import qualified Data.Map.Strict      as M
-import           Data.Maybe           (fromJust)
 import           Data.Text            (Text)
 import qualified Data.Text            as T
 import           Data.Vector          (Vector)
@@ -107,73 +106,78 @@ main :: IO ()
 main = do
   InArgs {..} <- execParser opts
 
+  -- parse the JSON file to Aeson.Values first
   values <- eitherDecode' <$> BS.readFile infile
 
+  -- then try to parsse to our data, Model, and ModelParams
+  -- NB: need to give explicit types here so the parser knows what to look for.
   case parseEither parseModel =<< values of
-    Left err -> print err
-    Right (dataH :: Vector Int, model :: Model Double, modelparams :: Map Text (ModelParam Double)) -> do
-
-      g <- createSystemRandom
+    Left err -> error err
+    Right
+      ( dataH :: Vector Int
+      , model :: Model Double
+      , modelparams :: Map Text (ModelParam Double)
+      ) -> do
 
       let s = V.unzip . V.fromList $ M.toList modelparams
           mpnames = fst s
           mps = snd s
           start = fmap _mpInitialValue mps
-          logPriors = fmap _mpLogPrior mps
-          variations :: Vector (ModelVar Double)
+          logpriors = fmap _mpLogPrior mps
           variations = fmap _mpVariation mps
+          toError = either error id
 
-      let toError = either error id
-
-      let logLH :: forall a. (Floating a, Ord a, Mode a, Scalar a ~ Double) => Vector a -> a
+          -- I'm not sure why we need an explicit type here.
+          -- probably because of the RankNType going on here
+          logLH
+            :: forall a. (Floating a, Ord a, Mode a, Scalar a ~ Double)
+            => Vector a -> a
           logLH =
             toError
             . modelLogPosterior
                 dataH
                 (fmap auto model)
                 (fmap (fmap auto) variations)
-                (fmap (ppToFunc . fmap auto) logPriors)
-          gLogLH :: Vector Double -> Vector Double
+                (fmap (ppToFunc . fmap auto) logpriors)
+
           gLogLH = grad logLH
-          xs = take 100 $ conjugateGradientAscent logLH start
-          start' = last xs
+
+          -- find the best starting location and the hessian there
+          start' = last . take 100 $ conjugateGradientAscent logLH start
           hess' = hessian (negate . logLH) start'
-          -- cov :: Vector (Vector Double)
+
+          -- invert hessian -> covariance matrix
+          -- then find the transform from "canonical" variables to "real" variables
           cov = toError $ invM hess'
           t = cholM cov
           it = toError $ invM t
-          itT = fromJust $ reifyMatrix it (toVectorM . transpose)
-          cov' = itT !*! cov !*! it
           transform v = (t !* v) ^+^ start'
           itransform v' = it !* (v' ^-^ start')
 
+      -- need an RNG...
+      g <- createSystemRandom
 
+      -- finally, build the chain, metropolis transition, and the MCMC walk
       let c =
             Chain
               (Target (logLH . transform) $ Just (gLogLH . transform))
-              (logLH (start' :: Vector Double))
-              (itransform start' :: Vector Double)
+              (logLH start')
+              (itransform start')
               Nothing
+
           trans = metropolis (1 / fromIntegral nskip)
-          chain =
-            takeEvery nskip
-            . LT.drop nburn
-            $ runMC trans c g
+          walk = takeEvery nskip . LT.drop nburn $ runMC trans c g
 
 
+      -- write the walk locations to file.
       withFile outfile WriteMode $ \f -> do
         hPutStrLn f . mconcat . intersperse ", " . fmap T.unpack
           $ "llh" : V.toList mpnames
 
-        LT.runListT . LT.take nsamps
-          $ do
-            Chain{..} <- chain
-            LT.liftIO $ print chainPosition
-            LT.liftIO . print . fmap prediction
-              . appVars variations (transform chainPosition)
-              $ model
-            LT.liftIO $ do
-              hPutStr f $ show chainScore ++ ", "
-              hPutStrLn f
-                . mconcat . intersperse ", " . V.toList
-                $ show <$> transform chainPosition
+        LT.runListT . LT.take nsamps $ do
+          Chain{..} <- walk
+          LT.liftIO $ do
+            hPutStr f $ show chainScore ++ ", "
+            hPutStrLn f
+              . mconcat . intersperse ", " . V.toList
+              $ show <$> transform chainPosition
