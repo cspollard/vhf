@@ -12,6 +12,7 @@
 
 module Main where
 
+import           Control.Lens
 import           Data.Aeson
 import           Data.Aeson.Types     (Parser, parseEither)
 import qualified Data.ByteString.Lazy as BS
@@ -22,6 +23,7 @@ import           Data.Text            (Text)
 import qualified Data.Text            as T
 import           Data.Vector          (Vector)
 import qualified Data.Vector          as V
+import           Debug.Trace
 import           Linear.Matrix
 import           List.Transformer     (ListT (..), Step (..))
 import qualified List.Transformer     as LT
@@ -33,7 +35,7 @@ import           System.IO            (BufferMode (..), IOMode (..), hPutStr,
                                        hPutStrLn, hSetBuffering, stdout,
                                        withFile)
 
-import           InMatrix             hiding (transpose)
+import           InMatrix             hiding (transpose, zero)
 import           MarkovChain
 import           Matrix
 import           Model
@@ -97,7 +99,6 @@ main = do
           start = fmap _mpInitialValue mps
           priors = fmap _mpPrior mps
           variations = fmap _mpVariation mps
-          toError = either error id
 
           -- I'm not sure why we need an explicit type here.
           -- probably because of the RankNType going on here
@@ -114,35 +115,54 @@ main = do
 
           gLogLH = grad logLH
 
+      putStrLn ""
 
       -- find the maximum likelihood starting location
+      let xs = take 100 $ conjugateGradientAscent logLH start
+          x = last xs
+
       start' <-
-        let x = last . take 100 $ conjugateGradientAscent logLH start
-        in if any isNaN x || isNaN (logLH x)
+        if any isNaN x || isNaN (logLH x)
           then do
-            print "warning: could not find a likelihood maximum"
-            print "based on your model and initial parameter values."
-            print "using initial values to determine hessian:"
-            print "this could be extremely inefficient."
+            putStrLn "warning: could not find a likelihood maximum"
+            putStrLn "based on your model and initial parameter values."
+            putStrLn "using initial values to determine hessian:"
+            putStrLn "this could be extremely inefficient."
+            putStrLn ""
+            -- putStrLn "the 'best' signal histogram appears to be"
+            -- print $ signalVars dataH model
             return start
           else
             return x
 
-      putStrLn ""
-      print "starting location:"
+      putStrLn "starting params:"
       print $ V.zip mpnames start'
-      print "starting location likelihood:"
+      putStrLn "log-likelihood of starting params:"
       print $ logLH start'
+      putStrLn ""
+      putStrLn "data prediction given starting params:"
+      print . toError $ prediction =<< appVars variations start' model
+      putStrLn ""
+      putStrLn "actual data:"
+      print dataH
       putStrLn ""
 
       -- invert hessian -> covariance matrix
-      -- then find the transform from "canonical" variables to "real" variables
+      -- then find the transform from canonical variables
+      -- (with mu ~0 and sigma ~1) to the original variables.
       let hess' = hessian (negate . logLH) start'
           cov = toError $ invM hess'
           t = cholM cov
           it = toError $ invM t
           transform v = (t !* v) ^+^ start'
           itransform v' = it !* (v' ^-^ start')
+
+      putStrLn "hessian matrix:"
+      print . fst $ toMatrix hess'
+      putStrLn ""
+      putStrLn "covariance matrix:"
+      print . fst $ toMatrix cov
+      putStrLn ""
 
       -- need an RNG...
       g <- createSystemRandom
@@ -215,3 +235,36 @@ parseModel = withObject "error: parseModel was not given a json object" $
     mps <- o .: "ModelVars"
 
     return (d, m, mps)
+
+
+signalVars
+  :: forall a b. (Ord a, Floating a, Integral b, Show a)
+  => Vector b
+  -> Model a
+  -> (Vector Text, Vector (ParamPrior a), Vector (ModelVar a), Vector a)
+signalVars dataH model@Model{..} =
+  let names = iover traversed (\i _ -> "sigma" <> T.pack (show i)) _mSig
+      priors = fmap (const Flat) _mSig
+      variations =
+        _mSig
+          & iover traversed
+            (\i _ -> ModelVar Nothing (Just $ iover traversed (\j _ -> if i == j then 1 else 0) _mSig) Nothing Nothing)
+      ones = over traverse (const 1) _mSig
+      logLH
+        :: forall c. (Floating c, Ord c, Mode c, Scalar c ~ a)
+        => Vector c -> c
+      logLH =
+        toError
+          . modelLogPosterior
+            dataH
+            (fmap auto model)
+            (fmap (fmap auto) variations)
+            (fmap (ppToFunc . fmap auto) priors)
+      model' = model{ _mSig = ones}
+      xs = traceShow (prediction model') . traceShow (grad logLH ones) . traceShowId . take 100 $ gradientAscent logLH ones
+      best = last xs
+  in (names, priors, variations, best)
+
+
+toError :: Either String c -> c
+toError = either error id

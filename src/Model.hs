@@ -82,13 +82,14 @@ data ParamPrior a =
   Flat
   | Normal a a
   | LogNormal a a
-  deriving (Generic, Functor)
+  deriving (Generic, Functor, Show)
 
 instance FromJSON a => FromJSON (ParamPrior a) where
   parseJSON (String "Flat") = return Flat
 
   parseJSON (Object o) =
-    (o .: "Normal" >>= p Normal) <|> (o .: "LogNormal" >>= p LogNormal)
+    (o .: "Normal" >>= p Normal)
+      <|> (o .: "LogNormal" >>= p LogNormal)
     where
       p f (Object m) = f <$> m .: "Mu" <*> m .: "Sigma"
       p _ invalid    = typeMismatch "ParamPrior" invalid
@@ -145,13 +146,14 @@ prediction' bkgs sig mig lumi =
   in lumi *^ (sigtot ^+^ bkgtot)
 
 
-prediction :: Num a => Model a -> Maybe (Vector a)
+prediction :: Num a => Model a -> Either String (Vector a)
 prediction Model{..} =
-  join $ reifyVectorNat _mSig
-    $ \sig -> reifyMatrix1 _mMig
-      $ \mig -> do
-        bkgs <- traverse fromVector _mBkgs
-        return . toVector $ prediction' bkgs sig mig _mLumi
+  toEither "backgrounds have incorrect length." . join
+    $ reifyVectorNat _mSig
+      $ \sig -> reifyMatrix1 _mMig
+        $ \mig -> do
+          bkgs <- traverse fromVector _mBkgs
+          return . toVector $ prediction' bkgs sig mig _mLumi
 
 
 modelLogLikelihood
@@ -176,17 +178,18 @@ appVars mvs ps m = foldM (fmap . addM) m ms
 mergeBkgs :: (KnownNat n, Num a) => a -> Map Text (V n a) -> Map Text (V n a) -> Map Text (V n a)
 mergeBkgs x b = fmap (x *^) . liftU2 (^-^) b
 
+
 mergeSig :: (KnownNat n, Num a) => a -> V n a -> V n a -> V n a
 mergeSig x s = (x *^) . (^-^ s)
+
 
 mergeMig :: (KnownNat n, KnownNat m, Num a) => a -> M n m a -> M n m a -> M n m a
 mergeMig x m = (x *!!) . (!-! m)
 
+
 mergeLumi :: Num c => c -> c -> c -> c
 mergeLumi x l = (x *) . flip (-) l
 
-toEither :: a -> Maybe b -> Either a b
-toEither x = maybe (Left x) Right
 
 appVar :: Num a => ModelVar a -> a -> Model a -> Either String (Model a)
 appVar ModelVar{..} x Model{..} = toEither "appVar failed" $
@@ -209,3 +212,7 @@ appVar ModelVar{..} x Model{..} = toEither "appVar failed" $
             (toVector $ maybe zero (mergeSig x sig) vSig)
             (toVectorM $ maybe zero (mergeMig x mig) vMig)
             (maybe 0 (mergeLumi x _mLumi) _mvLumi)
+
+
+toEither :: a -> Maybe b -> Either a b
+toEither x = maybe (Left x) Right

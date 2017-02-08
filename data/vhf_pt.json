@@ -2,9 +2,10 @@
     "Data" :  [44812, 3241, 494, 90]
     , "Nominal" : {
         "Bkgs" : { "ttbar" : [1.95e-2, 8.38e-4, 1.85e-4, 0.0] }
-        , "Sig" : [0, 0, 0, 0]
+        , "Sig" : [0, 0, 0, 0, 0]
         , "Mig" :
-            [ [0.804, 1.22e-2, 6.57e-3, 2.20e-3]
+            [ [0.1, 1e-3, 0.0, 0.0]
+            , [0.804, 1.22e-2, 6.57e-3, 2.20e-3]
             , [1.47e-2, 0.859, 9.61e-2, 7.49e-3]
             , [5.47e-5, 2.52e-2, 0.815, 0.111]
             , [2.12e-6, 2.10e-4, 3.55e-2, 0.810]
@@ -34,31 +35,39 @@
             "InitialValue" : 1
             , "Prior" : "Flat"
             , "Variation" : {
-                "Sig" : [1, 0, 0, 0]
+                "Sig" : [1, 0, 0, 0, 0]
             }
         }
 
         , "sigma1" : {
-            "InitialValue" : 0.1
+            "InitialValue" : 0.05
             , "Prior" : "Flat"
             , "Variation" : {
-                "Sig" : [0, 1, 0, 0]
+                "Sig" : [0, 1, 0, 0, 0]
             }
         }
 
         , "sigma2" : {
-            "InitialValue" : 0.01
+            "InitialValue" : 0.001
             , "Prior" : "Flat"
             , "Variation" : {
-                "Sig" : [0, 0, 1, 0]
+                "Sig" : [0, 0, 1, 0, 0]
             }
         }
 
         , "sigma3" : {
-            "InitialValue" : 0.003
+            "InitialValue" : 0.000
             , "Prior" : "Flat"
             , "Variation" : {
-                "Sig" : [0, 0, 0, 1]
+                "Sig" : [0, 0, 0, 1, 0]
+            }
+        }
+
+        , "sigma4" : {
+            "InitialValue" : 0.000
+            , "Prior" : "Flat"
+            , "Variation" : {
+                "Sig" : [0, 0, 0, 0, 1]
             }
         }
     }
