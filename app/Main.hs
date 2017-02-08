@@ -13,6 +13,7 @@
 module Main where
 
 import           Control.Lens
+import           Control.Monad        (when)
 import           Data.Aeson
 import           Data.Aeson.Types     (Parser, parseEither)
 import qualified Data.ByteString.Lazy as BS
@@ -23,7 +24,6 @@ import           Data.Text            (Text)
 import qualified Data.Text            as T
 import           Data.Vector          (Vector)
 import qualified Data.Vector          as V
-import           Debug.Trace
 import           Linear.Matrix
 import           List.Transformer     (ListT (..), Step (..))
 import qualified List.Transformer     as LT
@@ -154,8 +154,8 @@ main = do
           cov = toError $ invM hess'
           t = cholM cov
           it = toError $ invM t
-          transform v = (t !* v) ^+^ start'
-          itransform v' = it !* (v' ^-^ start')
+          transform' v = (t !* v) ^+^ start'
+          invtransform' v' = it !* (v' ^-^ start')
 
       putStrLn "hessian matrix:"
       print . fst $ toMatrix hess'
@@ -163,6 +163,12 @@ main = do
       putStrLn "covariance matrix:"
       print . fst $ toMatrix cov
       putStrLn ""
+      putStrLn "transformation matrix:"
+      print . fst $ toMatrix t
+
+      when
+        (anyOf (traverse.traverse) isNaN t)
+        $ error "we have NaNs in the transformation matrix; exiting."
 
       -- need an RNG...
       g <- createSystemRandom
@@ -170,9 +176,9 @@ main = do
       -- finally, build the chain, metropolis transition, and the MCMC walk
       let c =
             Chain
-              (Target (logLH . transform) $ Just (gLogLH . transform))
+              (Target (logLH . transform') $ Just (gLogLH . transform'))
               (logLH start')
-              (itransform start')
+              (invtransform' start')
               Nothing
 
           trans = metropolis (1 / fromIntegral nskip)
@@ -190,7 +196,7 @@ main = do
             hPutStr f $ show chainScore ++ ", "
             hPutStrLn f
               . mconcat . intersperse ", " . V.toList
-              $ show <$> transform chainPosition
+              $ show <$> transform' chainPosition
 
 
 everyLT :: Monad m => Int -> (a -> m ()) -> ListT m a -> ListT m a
@@ -238,7 +244,7 @@ parseModel = withObject "error: parseModel was not given a json object" $
 
 
 signalVars
-  :: forall a b. (Ord a, Floating a, Integral b, Show a)
+  :: forall a b. (Ord a, Floating a, Integral b)
   => Vector b
   -> Model a
   -> (Vector Text, Vector (ParamPrior a), Vector (ModelVar a), Vector a)
@@ -260,8 +266,7 @@ signalVars dataH model@Model{..} =
             (fmap auto model)
             (fmap (fmap auto) variations)
             (fmap (ppToFunc . fmap auto) priors)
-      model' = model{ _mSig = ones}
-      xs = traceShow (prediction model') . traceShow (grad logLH ones) . traceShowId . take 100 $ gradientAscent logLH ones
+      xs = take 100 $ gradientAscent logLH ones
       best = last xs
   in (names, priors, variations, best)
 
